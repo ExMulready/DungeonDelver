@@ -1,0 +1,427 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DungeonDelver — design tokens
+
+   Diablo 2's UI is almost entirely dark stone and candlelit gold, with colour
+   reserved for information: red for blood, blue for mana, and the rarity ramp
+   on item names. Everything here is CSS and inline SVG — no raster assets — so
+   the PWA install stays tiny and renders identically offline.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@theme {
+  /* Stone. The UI chrome lives here. */
+  --color-void: #0a0806;
+  --color-pitch: #120e0b;
+  --color-panel: #1a1410;
+  --color-raised: #2b2118;
+  --color-bevel: #3d3227;
+  --color-bevel-lit: #574733;
+
+  /* Candlelight. All primary text is some tint of gold. */
+  --color-gold: #c7b377;
+  --color-gold-bright: #e8d9a0;
+  --color-gold-dim: #8a7a4e;
+  --color-ash: #6b6155;
+
+  /* Vitals. */
+  --color-blood: #a41e1e;
+  --color-blood-bright: #ff4a4a;
+  --color-blood-deep: #5c0d0d;
+  --color-mana: #5a6b8c;
+  --color-mana-bright: #7ea3d8;
+  --color-mana-deep: #1e2a44;
+
+  /* Item rarity — the D2 ramp, unchanged because it is load-bearing muscle
+     memory for anyone who has played it. */
+  --color-common: #d0c9bd;
+  --color-magic: #6a6aff;
+  --color-rare: #ffff64;
+  --color-unique: #a08858;
+  --color-set: #00ff00;
+  --color-crafted: #ff8000;
+
+  /* Typography — wired to next/font in layout.tsx, so these self-host. */
+  --font-display: var(--font-cinzel), "Times New Roman", serif;
+  --font-body: var(--font-fell), Georgia, serif;
+
+  --radius-panel: 2px;
+
+  --animate-flicker: flicker 4s ease-in-out infinite;
+  --animate-ember: ember 14s linear infinite;
+  --animate-pulse-slow: pulse-slow 3.5s ease-in-out infinite;
+}
+
+@keyframes flicker {
+  0%, 100% { opacity: 1; }
+  42%      { opacity: 0.93; }
+  47%      { opacity: 0.82; }
+  52%      { opacity: 0.96; }
+  71%      { opacity: 0.88; }
+}
+
+@keyframes ember {
+  0%   { transform: translateY(0) translateX(0); opacity: 0; }
+  10%  { opacity: 0.7; }
+  90%  { opacity: 0.3; }
+  100% { transform: translateY(-90vh) translateX(24px); opacity: 0; }
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+
+@keyframes scroll-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Base
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-void);
+    color: var(--color-gold);
+    font-family: var(--font-body);
+    /* Layered: a warm pool of candlelight top-centre, a cold one bottom-left,
+       over near-black. Gives the flat page a sense of a lit room. */
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -10%, rgba(139, 106, 47, 0.16), transparent 70%),
+      radial-gradient(ellipse 60% 50% at 0% 100%, rgba(40, 52, 78, 0.13), transparent 70%),
+      linear-gradient(180deg, #0d0a07 0%, #0a0806 55%, #070504 100%);
+    background-attachment: fixed;
+    min-height: 100dvh;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Film grain. Without this the gradients band visibly on cheap panels and the
+     whole thing looks like a CSS demo rather than a game. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.045;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* Vignette — pulls the eye to centre screen. */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse 75% 65% at 50% 45%, transparent 40%, rgba(0, 0, 0, 0.72) 100%);
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    letter-spacing: 0.045em;
+    color: var(--color-gold-bright);
+    text-shadow: 0 0 14px rgba(199, 179, 119, 0.24), 0 1px 2px rgba(0, 0, 0, 0.9);
+  }
+
+  ::selection {
+    background: rgba(164, 30, 30, 0.45);
+    color: var(--color-gold-bright);
+  }
+
+  /* Iron scrollbars. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-bevel) transparent;
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track {
+    background: var(--color-pitch);
+    border-left: 1px solid var(--color-bevel);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, var(--color-bevel-lit), var(--color-bevel));
+    border: 1px solid #000;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, var(--color-gold-dim), var(--color-bevel-lit));
+  }
+
+  :focus-visible {
+    outline: 1px solid var(--color-gold);
+    outline-offset: 2px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Components
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@layer components {
+
+  /* ── Stone panel ─────────────────────────────────────────────────────────
+     The workhorse container. Bevel is done with inset shadows: a lit top edge
+     and a black bottom edge, which is what sells "carved stone" rather than
+     "div with a border". */
+  .panel {
+    position: relative;
+    background:
+      linear-gradient(180deg, rgba(43, 33, 24, 0.55) 0%, rgba(18, 14, 11, 0.92) 55%, rgba(10, 8, 6, 0.96) 100%);
+    border: 1px solid var(--color-bevel);
+    border-radius: var(--radius-panel);
+    box-shadow:
+      inset 0 1px 0 rgba(199, 179, 119, 0.13),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.75),
+      inset 1px 0 0 rgba(199, 179, 119, 0.05),
+      0 3px 14px rgba(0, 0, 0, 0.75);
+  }
+
+  /* Adds gold filigree corners. Two pseudo-elements, each carrying two corners
+     via multiple backgrounds, so no extra markup is needed. */
+  .panel-ornate::before,
+  .panel-ornate::after {
+    content: "";
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    pointer-events: none;
+    background-repeat: no-repeat;
+    background-size: 22px 22px;
+    opacity: 0.75;
+  }
+  .panel-ornate::before {
+    top: -1px;
+    left: -1px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22' fill='none' stroke='%23c7b377' stroke-width='1.3'%3E%3Cpath d='M1 8V1h7M1 14V4M4 1h10'/%3E%3Ccircle cx='4.5' cy='4.5' r='1.6' fill='%23c7b377' stroke='none'/%3E%3C/svg%3E");
+  }
+  .panel-ornate::after {
+    bottom: -1px;
+    right: -1px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22' fill='none' stroke='%23c7b377' stroke-width='1.3'%3E%3Cpath d='M21 14v7h-7M21 8v10M18 21H8'/%3E%3Ccircle cx='17.5' cy='17.5' r='1.6' fill='%23c7b377' stroke='none'/%3E%3C/svg%3E");
+  }
+
+  /* ── Vellum ──────────────────────────────────────────────────────────────
+     Narration surface. Aged and dark rather than bright parchment — a white
+     page would blow out the whole palette. */
+  .vellum {
+    position: relative;
+    background:
+      radial-gradient(ellipse at 25% 15%, rgba(122, 96, 56, 0.15), transparent 62%),
+      radial-gradient(ellipse at 80% 85%, rgba(92, 70, 40, 0.11), transparent 58%),
+      linear-gradient(168deg, #231c14 0%, #1b1610 48%, #15110c 100%);
+    border: 1px solid var(--color-bevel);
+    box-shadow:
+      inset 0 0 60px rgba(0, 0, 0, 0.55),
+      inset 0 1px 0 rgba(199, 179, 119, 0.08),
+      0 3px 14px rgba(0, 0, 0, 0.7);
+    color: #d8c9a3;
+  }
+
+  /* ── Buttons ─────────────────────────────────────────────────────────────
+     Cast-metal plaque. Lifts on hover, depresses on active. */
+  .btn-ornate {
+    position: relative;
+    font-family: var(--font-display);
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--color-gold);
+    background: linear-gradient(180deg, #33281c 0%, #221a13 52%, #16110c 100%);
+    border: 1px solid var(--color-bevel);
+    border-radius: var(--radius-panel);
+    box-shadow:
+      inset 0 1px 0 rgba(199, 179, 119, 0.18),
+      inset 0 -2px 4px rgba(0, 0, 0, 0.6),
+      0 2px 6px rgba(0, 0, 0, 0.6);
+    transition: color 140ms ease, border-color 140ms ease, box-shadow 160ms ease, transform 100ms ease;
+    cursor: pointer;
+  }
+  .btn-ornate:hover:not(:disabled) {
+    color: var(--color-gold-bright);
+    border-color: var(--color-gold-dim);
+    box-shadow:
+      inset 0 1px 0 rgba(232, 217, 160, 0.3),
+      inset 0 -2px 4px rgba(0, 0, 0, 0.55),
+      0 0 18px rgba(199, 179, 119, 0.22),
+      0 2px 8px rgba(0, 0, 0, 0.65);
+  }
+  .btn-ornate:active:not(:disabled) {
+    transform: translateY(1px);
+    box-shadow:
+      inset 0 2px 5px rgba(0, 0, 0, 0.75),
+      0 1px 2px rgba(0, 0, 0, 0.6);
+  }
+  .btn-ornate:disabled {
+    opacity: 0.42;
+    cursor: not-allowed;
+    color: var(--color-ash);
+  }
+
+  /* Blood variant — destructive and high-stakes actions. */
+  .btn-blood {
+    background: linear-gradient(180deg, #4a1414 0%, #2e0d0d 52%, #1a0707 100%);
+    border-color: #6b2020;
+    color: #e8b0b0;
+  }
+  .btn-blood:hover:not(:disabled) {
+    color: #ffd8d8;
+    border-color: var(--color-blood);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 120, 120, 0.25),
+      0 0 20px rgba(164, 30, 30, 0.35),
+      0 2px 8px rgba(0, 0, 0, 0.65);
+  }
+
+  /* ── Ornamental divider ──────────────────────────────────────────────────
+     Gold rule that fades at both ends with a diamond at centre. */
+  .divider-ornate {
+    position: relative;
+    height: 1px;
+    border: 0;
+    background: linear-gradient(90deg, transparent, var(--color-bevel-lit) 18%, var(--color-gold-dim) 50%, var(--color-bevel-lit) 82%, transparent);
+  }
+  .divider-ornate::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 7px;
+    height: 7px;
+    transform: translate(-50%, -50%) rotate(45deg);
+    background: var(--color-gold-dim);
+    box-shadow: 0 0 8px rgba(199, 179, 119, 0.5);
+  }
+
+  /* ── Vital orbs ──────────────────────────────────────────────────────────
+     The single strongest Diablo signal in the whole UI. A sphere with a
+     specular highlight, filled bottom-up by --fill (0-100). */
+  .orb {
+    position: relative;
+    border-radius: 9999px;
+    overflow: hidden;
+    border: 2px solid #100c09;
+    box-shadow:
+      inset 0 0 22px rgba(0, 0, 0, 0.85),
+      0 0 14px rgba(0, 0, 0, 0.8);
+    background: #0c0908;
+  }
+  .orb-fill {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: calc(var(--fill, 100) * 1%);
+    transition: height 520ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .orb-health .orb-fill {
+    background: linear-gradient(180deg, var(--color-blood-bright) 0%, var(--color-blood) 42%, var(--color-blood-deep) 100%);
+  }
+  .orb-mana .orb-fill {
+    background: linear-gradient(180deg, var(--color-mana-bright) 0%, var(--color-mana) 42%, var(--color-mana-deep) 100%);
+  }
+  /* Glass highlight, drawn above the fill so the sphere reads as convex. */
+  .orb::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    pointer-events: none;
+    background:
+      radial-gradient(circle at 34% 26%, rgba(255, 255, 255, 0.38), transparent 42%),
+      radial-gradient(circle at 50% 50%, transparent 52%, rgba(0, 0, 0, 0.55) 100%);
+  }
+
+  /* ── Item rarity ─────────────────────────────────────────────────────────
+     Glow scales with rarity, matching the ramp above. */
+  .rarity-common  { color: var(--color-common); }
+  .rarity-magic   { color: var(--color-magic);  text-shadow: 0 0 9px rgba(106, 106, 255, 0.55); }
+  .rarity-rare    { color: var(--color-rare);   text-shadow: 0 0 9px rgba(255, 255, 100, 0.45); }
+  .rarity-unique  { color: var(--color-unique); text-shadow: 0 0 11px rgba(160, 136, 88, 0.6); }
+  .rarity-set     { color: var(--color-set);    text-shadow: 0 0 9px rgba(0, 255, 0, 0.4); }
+  .rarity-crafted { color: var(--color-crafted); text-shadow: 0 0 9px rgba(255, 128, 0, 0.45); }
+
+  /* ── Inputs ──────────────────────────────────────────────────────────────
+     Recessed slot, the inverse bevel of .btn-ornate. */
+  .input-ornate {
+    background: linear-gradient(180deg, #0c0906 0%, #14100b 100%);
+    border: 1px solid var(--color-bevel);
+    border-radius: var(--radius-panel);
+    color: var(--color-gold-bright);
+    font-family: var(--font-body);
+    box-shadow:
+      inset 0 2px 5px rgba(0, 0, 0, 0.8),
+      inset 0 -1px 0 rgba(199, 179, 119, 0.07);
+    transition: border-color 140ms ease, box-shadow 160ms ease;
+  }
+  .input-ornate::placeholder { color: #5a5145; }
+  .input-ornate:focus {
+    outline: none;
+    border-color: var(--color-gold-dim);
+    box-shadow:
+      inset 0 2px 5px rgba(0, 0, 0, 0.8),
+      0 0 14px rgba(199, 179, 119, 0.18);
+  }
+
+  /* ── Selectable tile ─────────────────────────────────────────────────────
+     Race/class/portrait choices. Gold rim plus lift when chosen. */
+  .tile-select {
+    position: relative;
+    background: linear-gradient(180deg, rgba(43, 33, 24, 0.5), rgba(14, 11, 8, 0.9));
+    border: 1px solid var(--color-bevel);
+    border-radius: var(--radius-panel);
+    transition: border-color 150ms ease, box-shadow 180ms ease, transform 120ms ease;
+    cursor: pointer;
+  }
+  .tile-select:hover {
+    border-color: var(--color-gold-dim);
+    box-shadow: 0 0 16px rgba(199, 179, 119, 0.16);
+  }
+  .tile-select[data-selected="true"] {
+    border-color: var(--color-gold);
+    transform: translateY(-2px);
+    box-shadow:
+      inset 0 0 26px rgba(199, 179, 119, 0.1),
+      0 0 26px rgba(199, 179, 119, 0.3),
+      0 6px 16px rgba(0, 0, 0, 0.7);
+  }
+
+  /* Narration paragraphs fade in as the model writes them. */
+  .scroll-in {
+    animation: scroll-in 420ms ease-out both;
+  }
+}
+
+@layer utilities {
+  .text-glow-gold  { text-shadow: 0 0 12px rgba(199, 179, 119, 0.55); }
+  .text-glow-blood { text-shadow: 0 0 12px rgba(164, 30, 30, 0.6); }
+
+  /* Small-caps engraved label used for stat names and section headers. */
+  .label-engraved {
+    font-family: var(--font-display);
+    font-size: 0.7rem;
+    letter-spacing: 0.19em;
+    text-transform: uppercase;
+    color: var(--color-gold-dim);
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.9);
+  }
+
+  /* Lifts content above the fixed grain and vignette layers on body. */
+  .above-atmosphere {
+    position: relative;
+    z-index: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

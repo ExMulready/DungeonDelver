@@ -1,0 +1,71 @@
+# Development stack: backing services only.
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#   npm run dev
+#
+# Next.js runs on the host instead of in a container. On Windows this is the
+# difference between usable and unusable — bind-mounted node_modules through
+# WSL2 is painfully slow — and it keeps roughly 300 MB of RAM free for the model.
+#
+# Note the ports differ from the full stack (Postgres on 5433, Ollama on 11434),
+# so this can run alongside docker-compose.yml without a collision. Point .env at:
+#   DATABASE_URL=postgresql://delver:delver@localhost:5433/dungeondelver
+#   OLLAMA_BASE_URL=http://localhost:11434/v1
+#   CHRONICLE_DIR=./data/campaigns
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: delver
+      POSTGRES_PASSWORD: delver
+      POSTGRES_DB: dungeondelver
+    command: >
+      postgres
+      -c shared_buffers=64MB
+      -c max_connections=30
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U delver -d dungeondelver"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    environment:
+      OLLAMA_KEEP_ALIVE: "10m"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_CONTEXT_LENGTH: "8192"
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_dev:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama --version || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:2b}
+    entrypoint: ["/bin/sh", "/init-model.sh"]
+    volumes:
+      - ./ollama/init-model.sh:/init-model.sh:ro
+    restart: "no"
+
+volumes:
+  pgdata_dev:
+  ollama_dev:

@@ -1,0 +1,39 @@
+{
+  "name": "DungeonDelver",
+  "short_name": "Delver",
+  "description": "An AI-narrated Dungeons & Dragons campaign that writes itself as you play.",
+  "start_url": "/campaigns",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0806",
+  "theme_color": "#0a0806",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "New descent",
+      "short_name": "New",
+      "url": "/characters/new"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+# Normalise to LF in the repository.
+* text=auto eol=lf
+
+# These are executed inside Linux containers. A CRLF here produces the classic
+# "bad interpreter: no such file or directory", so pin them regardless of the
+# checkout platform or the user's core.autocrlf setting.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+
+# Never touch binaries.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary

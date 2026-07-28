@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.github
+data
+.env
+.env*.local
+.env.production
+npm-debug.log*
+*.tsbuildinfo
+README.md
+.vercel
