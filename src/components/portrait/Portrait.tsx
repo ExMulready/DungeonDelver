@@ -19,23 +19,36 @@ const W = 200;
 const H = 240;
 const CX = 100;
 
-/** Skull outline: cranium arc into jaw into chin. */
+/**
+ * Skull outline: cranium arc into jaw into chin.
+ *
+ * Not a pure oval on purpose. A single smooth curve from crown to chin reads
+ * as a mannequin head; a woodcut face has structure. Two deviations from the
+ * simplest possible curve produce that: the crown arc uses a wide control
+ * point (flatter shoulders, less egg-like) and the temple-to-jaw run kicks
+ * slightly outward at the cheekbone before narrowing into the jaw, rather than
+ * tapering in one continuous sweep.
+ */
 function skullPath(m: Morph): string {
   const crownY = 96 - m.headH;
+  const templeY = 96;
   const jawHingeY = m.eyeY + 22;
 
   /* jawSquare interpolates the chin between a point and a shelf. */
   const chinHalf = m.jawW * (0.22 + m.jawSquare * 0.46);
   const chinCtrl = m.jawW * (0.62 + m.jawSquare * 0.3);
 
+  const crownSpread = m.headW * 0.82;
+  const cheekbone = m.headW * 1.02;
+
   return [
-    `M ${CX - m.headW} 96`,
-    `C ${CX - m.headW} ${crownY + 8}, ${CX - m.headW * 0.66} ${crownY}, ${CX} ${crownY}`,
-    `C ${CX + m.headW * 0.66} ${crownY}, ${CX + m.headW} ${crownY + 8}, ${CX + m.headW} 96`,
-    `C ${CX + m.headW} ${jawHingeY - 6}, ${CX + m.jawW + 2} ${jawHingeY}, ${CX + m.jawW} ${jawHingeY + 6}`,
+    `M ${CX - m.headW} ${templeY}`,
+    `C ${CX - m.headW} ${crownY + 4}, ${CX - crownSpread} ${crownY}, ${CX} ${crownY}`,
+    `C ${CX + crownSpread} ${crownY}, ${CX + m.headW} ${crownY + 4}, ${CX + m.headW} ${templeY}`,
+    `C ${CX + cheekbone} ${templeY + 10}, ${CX + m.jawW + 4} ${jawHingeY - 8}, ${CX + m.jawW} ${jawHingeY + 6}`,
     `C ${CX + chinCtrl} ${m.chinY - 4}, ${CX + chinHalf} ${m.chinY}, ${CX} ${m.chinY}`,
     `C ${CX - chinHalf} ${m.chinY}, ${CX - chinCtrl} ${m.chinY - 4}, ${CX - m.jawW} ${jawHingeY + 6}`,
-    `C ${CX - m.jawW - 2} ${jawHingeY}, ${CX - m.headW} ${jawHingeY - 6}, ${CX - m.headW} 96`,
+    `C ${CX - m.jawW - 4} ${jawHingeY - 8}, ${CX - cheekbone} ${templeY + 10}, ${CX - m.headW} ${templeY}`,
     "Z",
   ].join(" ");
 }
@@ -52,7 +65,7 @@ function Ear({ m, side, skin }: { m: Morph; side: -1 | 1; skin: PortraitSpec["sk
 
   return (
     <>
-      <path d={d} fill={skin.base} stroke={skin.line} strokeWidth={1.4} />
+      <path d={d} fill={skin.base} stroke={skin.line} strokeWidth={1.9} />
       <path
         d={d}
         fill={skin.shadow}
@@ -139,11 +152,11 @@ function Eyes({ spec }: { spec: PortraitSpec }) {
             {/* Upper lid line — the heaviest ink on the face. */}
             <path
               d={`M ${x - rx - 1.5} ${y - 1} Q ${x} ${y - ry - 3.2} ${x + rx + 1.5} ${y - 1}`}
-              fill="none" stroke={skin.line} strokeWidth={1.7} strokeLinecap="round"
+              fill="none" stroke={skin.line} strokeWidth={2.2} strokeLinecap="round"
             />
             <path
               d={`M ${x - rx} ${y + 1.5} Q ${x} ${y + ry + 1.6} ${x + rx} ${y + 1.5}`}
-              fill="none" stroke={skin.line} strokeWidth={0.9} opacity={0.55} strokeLinecap="round"
+              fill="none" stroke={skin.line} strokeWidth={1.1} opacity={0.6} strokeLinecap="round"
             />
           </g>
         );
@@ -196,7 +209,7 @@ function Nose({ spec }: { spec: PortraitSpec }) {
       {/* Base and nostrils. */}
       <path
         d={`M ${CX - wide} ${bottom} Q ${CX} ${bottom + 3.4} ${CX + wide} ${bottom}`}
-        fill="none" stroke={skin.line} strokeWidth={1.5} strokeLinecap="round"
+        fill="none" stroke={skin.line} strokeWidth={1.9} strokeLinecap="round"
       />
       <ellipse cx={CX - wide * 0.62} cy={bottom - 0.4} rx={1.5} ry={1.05} fill={skin.line} opacity={0.85} />
       <ellipse cx={CX + wide * 0.62} cy={bottom - 0.4} rx={1.5} ry={1.05} fill={skin.line} opacity={0.85} />
@@ -213,7 +226,7 @@ function Mouth({ spec }: { spec: PortraitSpec }) {
     <g>
       <path
         d={`M ${CX - half} ${y} Q ${CX} ${y + mouthCurve} ${CX + half} ${y}`}
-        fill="none" stroke={skin.line} strokeWidth={1.9} strokeLinecap="round"
+        fill="none" stroke={skin.line} strokeWidth={2.3} strokeLinecap="round"
       />
       {/* Lower lip catch-light. */}
       <path
@@ -455,11 +468,47 @@ function HairLayer({ spec, back }: { spec: PortraitSpec; back: boolean }) {
 
   const d = styles[hairStyle];
 
+  /* Unique per portrait+style: without this, every instance of HairLayer on
+     the page would share one <clipPath id>, and the browser resolves url(#id)
+     to whichever element with that id rendered FIRST — so every portrait
+     after the first would texture its hair with someone else's silhouette. */
+  const clipId = `hc-${spec.seed.toString(36)}-${spec.race}-${hairStyle}`;
+
+  /* A flat fill reads as a cap rather than hair. A handful of stroked "locks"
+     clipped to the exact silhouette breaks up the mass without needing
+     per-style geometry — the clip discards whatever falls outside, so the
+     same comb pattern works whether the shape underneath is a simple cap or
+     the scalloped curls/spike silhouettes. */
+  const strandTop = crownY - 6;
+  const strandBottom = eyeY + 22;
+  const strandXs = [-0.72, -0.5, -0.27, -0.05, 0.18, 0.4, 0.62, 0.82];
+
   return (
     <g>
-      <path d={d} fill={hair.base} stroke={hair.shadow} strokeWidth={1.1} strokeLinejoin="round" />
+      <path d={d} fill={hair.base} stroke={hair.shadow} strokeWidth={1.7} strokeLinejoin="round" />
       {/* Key-light sheen from upper-left. */}
       <path d={d} fill={hair.light} opacity={0.3} clipPath="url(#lightSide)" />
+
+      <clipPath id={clipId}>
+        <path d={d} />
+      </clipPath>
+      <g clipPath={`url(#${clipId})`}>
+        {strandXs.map((f, i) => {
+          const x = CX + f * hw;
+          const wobble = i % 2 === 0 ? 3.5 : -3.5;
+          return (
+            <path
+              key={i}
+              d={`M ${x} ${strandTop} Q ${x + wobble} ${(strandTop + strandBottom) / 2} ${x - wobble * 0.4} ${strandBottom}`}
+              fill="none"
+              stroke={hair.shadow}
+              strokeWidth={1.1}
+              opacity={0.4}
+              strokeLinecap="round"
+            />
+          );
+        })}
+      </g>
     </g>
   );
 }
@@ -519,7 +568,10 @@ function Marks({ spec }: { spec: PortraitSpec }) {
         opacity={0.16}
         clipPath="url(#rimSide)"
       />
-      <path d={skullPath(m)} fill="none" stroke={skin.line} strokeWidth={1.5} />
+      {/* Hard ink contour. Woodcut faces are defined by their outline more than
+         their shading, so this is drawn heavier than a realistic line weight
+         would call for. */}
+      <path d={skullPath(m)} fill="none" stroke={skin.line} strokeWidth={2.2} />
     </g>
   );
 }
@@ -561,9 +613,13 @@ export function Portrait({ spec, size = 160, className, framed = true }: Portrai
           <stop offset="100%" stopColor="#0b0805" />
         </radialGradient>
 
+        {/* Steeper than a photographic gradient: the light plateau holds
+            longer and the shadow arrives with more of an edge, closer to how
+            light falls across a carved or painted surface than a photo. */}
         <linearGradient id={`${uid}-face`} x1="0%" y1="0%" x2="100%" y2="60%">
           <stop offset="0%" stopColor={skin.light} />
-          <stop offset="46%" stopColor={skin.base} />
+          <stop offset="34%" stopColor={skin.light} />
+          <stop offset="52%" stopColor={skin.base} />
           <stop offset="100%" stopColor={skin.shadow} />
         </linearGradient>
       </defs>
@@ -605,11 +661,17 @@ export function Portrait({ spec, size = 160, className, framed = true }: Portrai
 
       {/* Skull. */}
       <path d={skullPath(m)} fill={`url(#${uid}-face)`} />
+
+      {/* Core shadow. The ambient gradient alone reads as a smooth photographic
+         falloff; a distinct shadow mass over the cheek and jaw on the far side
+         of the light is what gives the face a sense of carved planes instead. */}
+      <path d={skullPath(m)} fill={skin.shadow} opacity={0.32} clipPath="url(#rimSide)" />
+
       {/* Brow-ridge shadow across the upper face. */}
       <path
         d={`M ${CX - m.headW} ${m.eyeY - 14} Q ${CX} ${m.eyeY - 26} ${CX + m.headW} ${m.eyeY - 14}
             L ${CX + m.headW} ${m.eyeY - 4} Q ${CX} ${m.eyeY - 14} ${CX - m.headW} ${m.eyeY - 4} Z`}
-        fill={skin.shadow} opacity={m.brow * 0.5}
+        fill={skin.shadow} opacity={m.brow * 0.6 + 0.08}
       />
 
       {spec.horns && <Horns style={spec.horns} m={m} />}
