@@ -35,26 +35,35 @@ export const itemSchema = z.object({
   kind: z.string().max(40).optional(),
 });
 
+/*
+ * These carry NO defaults on anything but `name`, deliberately.
+ *
+ * An NPC, location, or quest reappearing in a scene without new information
+ * about it is the common case — the model is told to report only what the
+ * scene actually states — and a `.default(...)` would make "the model didn't
+ * mention a disposition change" indistinguishable from "the model wants it
+ * reset to neutral". mergeWorldFacts in lib/game/engine.ts relies on these
+ * being genuinely optional: a field absent from the update means "unchanged",
+ * and only a brand-new entity falls back to a sensible default.
+ */
 export const npcUpdateSchema = z.object({
   name: z.string().min(1).max(80),
-  role: z.string().max(120).default("unknown"),
-  disposition: z
-    .enum(["hostile", "wary", "neutral", "friendly", "devoted"])
-    .default("neutral"),
-  status: z.enum(["alive", "dead", "missing", "unknown"]).default("alive"),
+  role: z.string().max(120).optional(),
+  disposition: z.enum(["hostile", "wary", "neutral", "friendly", "devoted"]).optional(),
+  status: z.enum(["alive", "dead", "missing", "unknown"]).optional(),
   lastSeen: z.string().max(120).optional(),
 });
 
 export const locationUpdateSchema = z.object({
   name: z.string().min(1).max(80),
-  description: z.string().max(240).default(""),
-  visited: z.boolean().default(true),
+  description: z.string().max(240).optional(),
+  visited: z.boolean().optional(),
 });
 
 export const questUpdateSchema = z.object({
   name: z.string().min(1).max(80),
-  status: z.enum(["active", "complete", "failed"]).default("active"),
-  detail: z.string().max(240).default(""),
+  status: z.enum(["active", "complete", "failed"]).optional(),
+  detail: z.string().max(240).optional(),
 });
 
 /**

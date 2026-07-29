@@ -255,26 +255,57 @@ const MAX_QUESTS = 16;
 /**
  * Merges new observations into the world record.
  *
- * Matching is by lower-cased name and the newer entry wins, which is what lets
- * an NPC's status change from alive to dead without duplicating them. Lists are
- * capped from the front so a long campaign cannot grow the prompt without
- * bound; the oldest entries fall out of the structured record but survive in
- * the prose summary.
+ * Matching is by lower-cased name; a brand-new entity is seeded with
+ * `defaults`, an existing one keeps its prior fields except where the update
+ * explicitly supplies a new value. That last part is the reason this is not a
+ * plain object spread: `{ ...existing, ...update }` overwrites with
+ * `undefined` for every field the update omits (object spread includes keys
+ * whose value is `undefined`), which would erase an NPC's disposition the
+ * moment the model re-mentions them without restating it. Explicitly skipping
+ * `undefined` values is what makes "not mentioned this turn" mean "unchanged"
+ * rather than "reset".
+ *
+ * Lists are capped from the front so a long campaign cannot grow the prompt
+ * without bound; the oldest entries fall out of the structured record but
+ * survive in the prose summary.
  */
 function mergeWorldFacts(current: WorldFacts, update: TurnState): WorldFacts {
-  const byName = <T extends { name: string }>(existing: T[], incoming: T[], cap: number): T[] => {
+  function byName<T extends { name: string }>(
+    existing: T[],
+    incoming: Array<Partial<T> & { name: string }>,
+    cap: number,
+    defaults: Omit<T, "name">,
+  ): T[] {
     const map = new Map(existing.map((e) => [e.name.toLowerCase(), e]));
+
     for (const item of incoming) {
-      map.set(item.name.toLowerCase(), { ...map.get(item.name.toLowerCase()), ...item });
+      const key = item.name.toLowerCase();
+      const base: T = map.get(key) ?? ({ name: item.name, ...defaults } as T);
+      const merged: T = { ...base };
+      for (const [k, v] of Object.entries(item)) {
+        if (v !== undefined) (merged as Record<string, unknown>)[k] = v;
+      }
+      map.set(key, merged);
     }
+
     const merged = [...map.values()];
     return merged.slice(Math.max(0, merged.length - cap));
-  };
+  }
 
   return {
-    npcs: byName(current.npcs, update.npcs, MAX_NPCS),
-    locations: byName(current.locations, update.locations, MAX_LOCATIONS),
-    quests: byName(current.quests, update.quests, MAX_QUESTS),
+    npcs: byName(current.npcs, update.npcs, MAX_NPCS, {
+      role: "unknown",
+      disposition: "neutral",
+      status: "alive",
+    }),
+    locations: byName(current.locations, update.locations, MAX_LOCATIONS, {
+      description: "",
+      visited: true,
+    }),
+    quests: byName(current.quests, update.quests, MAX_QUESTS, {
+      status: "active",
+      detail: "",
+    }),
   };
 }
 
@@ -449,19 +480,38 @@ async function maybeCompact(
   const window = verbatimTurnWindow();
   const existing = ctx.memory.actSummary;
 
-  if (turnNumber <= window || turnNumber % COMPACT_EVERY !== 0) {
+  /* Narrator turnNumber is 1 on the opening scene, then climbs by exactly 2
+     every round after (a player insert followed by a narrator insert) — so it
+     is odd forever: 1, 3, 5, 7, 9, 11, .... An equality check against a
+     multiple of 8 (`=== 0`) would never fire, since an odd number is never
+     divisible by an even one. Checking a 2-wide band instead of exact equality
+     catches the boundary regardless of that parity, and stays correct even if
+     the increment pattern above ever changes. */
+  if (turnNumber <= window || turnNumber % COMPACT_EVERY >= 2) {
     return existing;
   }
 
-  /* Everything older than the verbatim window is a candidate; fold the batch
-     that is about to scroll out of it. */
+  /* Fold only the turns that have newly scrolled past the verbatim window
+     since the LAST compaction — not the whole history from turn 1.
+     `previousCutoff` reconstructs where the last cycle left off from
+     arithmetic alone (there is no stored "compacted through" marker): compaction
+     fires on a fixed cadence, so the prior cycle ran at turnNumber - COMPACT_EVERY,
+     unless that value hadn't yet cleared the window, in which case nothing has
+     been folded yet. Re-querying from turn 1 every time (the previous version
+     of this code) makes the transcript sent to the model grow without bound as
+     the campaign lengthens — precisely what compaction exists to prevent. */
   const cutoff = turnNumber - window;
+  const previousCutoff = Math.max(0, turnNumber - COMPACT_EVERY - window);
+
+  if (cutoff <= previousCutoff) return existing;
+
   const stale = await db
     .select()
     .from(campaignTurns)
     .where(eq(campaignTurns.campaignId, ctx.campaign.id))
     .orderBy(asc(campaignTurns.turnNumber))
-    .limit(cutoff);
+    .limit(cutoff - previousCutoff)
+    .offset(previousCutoff);
 
   if (stale.length === 0) return existing;
 
