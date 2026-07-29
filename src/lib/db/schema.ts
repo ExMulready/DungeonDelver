@@ -168,8 +168,11 @@ export const campaignTurns = pgTable(
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   },
   (t) => [
-    /* Every turn read is "the last N for this campaign, in order". */
-    index("turn_campaign_number_idx").on(t.campaignId, t.turnNumber),
+    /* Every turn read is "the last N for this campaign, in order".
+       Unique, not merely indexed: it is the database-level guarantee that two
+       racing requests cannot both write turn N of the same campaign, which
+       would double every XP, HP and inventory delta in that turn. */
+    uniqueIndex("turn_campaign_number_idx").on(t.campaignId, t.turnNumber),
   ],
 );
 

@@ -1,5 +1,10 @@
 import { auth } from "@/auth";
-import { loadCampaignContext, streamScene, commitTurn } from "@/lib/game/engine";
+import {
+  loadCampaignContext,
+  streamScene,
+  commitTurn,
+  TurnConflictError,
+} from "@/lib/game/engine";
 import type { Choice } from "@/lib/game/types";
 import { STATE_SENTINEL } from "@/lib/game/protocol";
 import { z } from "zod";
@@ -99,6 +104,8 @@ export async function POST(
           const tail = {
             choices: committed.choices satisfies Choice[],
             diceRoll: committed.diceRoll,
+            leveledTo: committed.leveledTo,
+            died: committed.died,
             character: {
               hpCurrent: committed.character.hpCurrent,
               hpMax: committed.character.hpMax,
@@ -115,14 +122,13 @@ export async function POST(
           /* The player may already have read a full scene. Close with an error
              tail rather than tearing the connection down, so the client can
              show what happened instead of a blank screen. */
+          const message =
+            err instanceof TurnConflictError
+              ? "That turn was already taken — reload to catch up."
+              : "The narrator lost the thread. Your progress up to this scene is saved.";
+
           controller.enqueue(
-            encoder.encode(
-              STATE_SENTINEL +
-                JSON.stringify({
-                  error:
-                    "The narrator lost the thread. Your progress up to this scene is saved.",
-                }),
-            ),
+            encoder.encode(STATE_SENTINEL + JSON.stringify({ error: message })),
           );
           controller.close();
         }

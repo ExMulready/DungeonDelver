@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { desc, eq, and } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 
 import { auth, signOut } from "@/auth";
 import { db } from "@/lib/db";
@@ -13,6 +13,7 @@ import { Portrait } from "@/components/portrait/Portrait";
 import { generatePortrait } from "@/lib/portraits/spec";
 import { getRace, getClass, TONES } from "@/lib/game/srd";
 import type { RaceId, GenderId } from "@/lib/game/srd";
+import { cn } from "@/lib/cn";
 
 export const metadata: Metadata = { title: "Campaigns" };
 export const dynamic = "force-dynamic";
@@ -32,12 +33,18 @@ export default async function CampaignsPage() {
   const session = await auth();
   if (!session?.user?.id) redirect("/signin");
 
-  const rows = await db
+  const all = await db
     .select()
     .from(campaigns)
     .innerJoin(characters, eq(campaigns.characterId, characters.id))
-    .where(and(eq(campaigns.userId, session.user.id), eq(campaigns.status, "active")))
+    .where(eq(campaigns.userId, session.user.id))
     .orderBy(desc(campaigns.lastPlayedAt));
+
+  /* Closed runs are listed rather than filtered away: the chronicle is the
+     point of the game, and a campaign that ended is exactly the one worth
+     reading back. */
+  const rows = all.filter((r) => r.campaign.status === "active");
+  const closed = all.filter((r) => r.campaign.status !== "active");
 
   return (
     <main className="mx-auto min-h-dvh max-w-4xl px-5 py-10">
@@ -74,60 +81,92 @@ export default async function CampaignsPage() {
         <>
           <Divider className="my-8" />
           <p className="label-engraved mb-4">Resume</p>
-
           <ul className="space-y-3">
-            {rows.map(({ campaign, character }) => {
-              const race = getRace(character.race);
-              const cls = getClass(character.class);
-              const tone = TONES.find((t) => t.id === campaign.tone);
-              const hpPct = Math.round((character.hpCurrent / character.hpMax) * 100);
+            {rows.map((row) => (
+              <CampaignRow key={row.campaign.id} {...row} />
+            ))}
+          </ul>
+        </>
+      )}
 
-              return (
-                <li key={campaign.id}>
-                  <Link href={`/campaigns/${campaign.id}`}>
-                    <Panel className="hover:border-gold-dim flex items-center gap-4 transition-colors">
-                      <Portrait
-                        spec={generatePortrait(
-                          character.race as RaceId,
-                          character.gender as GenderId,
-                          character.portraitSeed,
-                        )}
-                        size={72}
-                        className="shrink-0"
-                      />
-
-                      <div className="min-w-0 flex-1">
-                        <p className="text-gold-bright truncate text-lg">{campaign.title}</p>
-                        <p className="text-ash truncate text-sm italic">
-                          {character.name} — level {character.level} {race.name} {cls.name}
-                          {tone && ` · ${tone.name}`}
-                        </p>
-                        <p className="label-engraved mt-1.5">
-                          {campaign.turnCount === 0
-                            ? "Not yet begun"
-                            : `${campaign.turnCount} turns · ${relativeTime(campaign.lastPlayedAt)}`}
-                        </p>
-                      </div>
-
-                      <div className="shrink-0 text-right">
-                        <p className="text-blood-bright text-sm tabular-nums">
-                          {character.hpCurrent}/{character.hpMax}
-                        </p>
-                        <div className="bg-pitch border-bevel mt-1 h-1.5 w-16 overflow-hidden border">
-                          <div
-                            className="from-blood-deep to-blood-bright h-full bg-gradient-to-r"
-                            style={{ width: `${hpPct}%` }}
-                          />
-                        </div>
-                      </div>
-                    </Panel>
-                  </Link>
-                </li>
-              );
-            })}
+      {closed.length > 0 && (
+        <>
+          <Divider className="my-8" />
+          <p className="label-engraved mb-4">Ended</p>
+          <ul className="space-y-3">
+            {closed.map((row) => (
+              <CampaignRow key={row.campaign.id} {...row} closed />
+            ))}
           </ul>
         </>
       )}
     </main>
+  );
+}
+
+function CampaignRow({
+  campaign,
+  character,
+  closed = false,
+}: {
+  campaign: typeof campaigns.$inferSelect;
+  character: typeof characters.$inferSelect;
+  closed?: boolean;
+}) {
+  const race = getRace(character.race);
+  const cls = getClass(character.class);
+  const tone = TONES.find((t) => t.id === campaign.tone);
+  const hpPct = Math.round((character.hpCurrent / character.hpMax) * 100);
+
+  return (
+    <li>
+      <Link href={`/campaigns/${campaign.id}`}>
+        <Panel
+          className={cn(
+            "hover:border-gold-dim flex items-center gap-4 transition-colors",
+            closed && "opacity-60",
+          )}
+        >
+          <Portrait
+            spec={generatePortrait(
+              character.race as RaceId,
+              character.gender as GenderId,
+              character.portraitSeed,
+            )}
+            size={72}
+            className={cn("shrink-0", closed && "grayscale")}
+          />
+
+          <div className="min-w-0 flex-1">
+            <p className="text-gold-bright truncate text-lg">{campaign.title}</p>
+            <p className="text-ash truncate text-sm italic">
+              {character.name} — level {character.level} {race.name} {cls.name}
+              {tone && ` · ${tone.name}`}
+            </p>
+            <p className="label-engraved mt-1.5">
+              {campaign.status === "dead"
+                ? `Fell after ${campaign.turnCount} turns`
+                : campaign.status === "abandoned"
+                  ? `Abandoned after ${campaign.turnCount} turns`
+                  : campaign.turnCount === 0
+                    ? "Not yet begun"
+                    : `${campaign.turnCount} turns · ${relativeTime(campaign.lastPlayedAt)}`}
+            </p>
+          </div>
+
+          <div className="shrink-0 text-right">
+            <p className="text-blood-bright text-sm tabular-nums">
+              {character.hpCurrent}/{character.hpMax}
+            </p>
+            <div className="bg-pitch border-bevel mt-1 h-1.5 w-16 overflow-hidden border">
+              <div
+                className="from-blood-deep to-blood-bright h-full bg-gradient-to-r"
+                style={{ width: `${hpPct}%` }}
+              />
+            </div>
+          </div>
+        </Panel>
+      </Link>
+    </li>
   );
 }

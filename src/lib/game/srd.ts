@@ -205,6 +205,61 @@ export function deriveMaxHp(classId: ClassId, con: number): number {
   return Math.max(1, getClass(classId).hitDie + abilityModifier(con));
 }
 
+/* ── Advancement ──────────────────────────────────────────────────────────── */
+
+/**
+ * SRD 5.1 experience thresholds, indexed so that LEVEL_THRESHOLDS[n] is the XP
+ * required to reach level n + 1.
+ *
+ * Capped at 20 because that is where the SRD table ends, not because the
+ * narrator would refuse to keep going.
+ */
+export const LEVEL_THRESHOLDS = [
+  0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000,
+  85000, 100000, 120000, 140000, 165000, 195000, 225000, 265000, 305000, 355000,
+] as const;
+
+export const MAX_LEVEL = LEVEL_THRESHOLDS.length;
+
+/** The level a given total XP earns. Always at least 1, never above MAX_LEVEL. */
+export function levelForXp(xp: number): number {
+  let level = 1;
+  for (let i = 1; i < LEVEL_THRESHOLDS.length; i++) {
+    if (xp >= LEVEL_THRESHOLDS[i]) level = i + 1;
+    else break;
+  }
+  return level;
+}
+
+/** XP still owed before the next level, or null at the cap. */
+export function xpToNextLevel(xp: number): number | null {
+  const level = levelForXp(xp);
+  if (level >= MAX_LEVEL) return null;
+  return LEVEL_THRESHOLDS[level] - xp;
+}
+
+/**
+ * Maximum hit points at a given level.
+ *
+ * Level 1 is the full hit die; each level after adds the die's average rounded
+ * up, which is the SRD's own "fixed value" option. Taking the average rather
+ * than rolling keeps a character's HP a pure function of (class, CON, level) —
+ * so it can be recomputed from stored state at any time instead of needing a
+ * per-level roll history the schema does not keep.
+ */
+export function deriveMaxHpAtLevel(
+  classId: ClassId,
+  con: number,
+  level: number,
+): number {
+  const { hitDie } = getClass(classId);
+  const conMod = abilityModifier(con);
+  const levels = Math.max(1, Math.min(MAX_LEVEL, Math.floor(level)));
+  const perLevelAfterFirst = Math.floor(hitDie / 2) + 1;
+
+  return Math.max(1, hitDie + conMod + (levels - 1) * (perLevelAfterFirst + conMod));
+}
+
 /** Unarmoured baseline. Equipment adjusts this later; the narrator does not. */
 export function deriveAc(dex: number): number {
   return 10 + abilityModifier(dex);

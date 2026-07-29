@@ -37,5 +37,9 @@ export type TurnTail = {
       quantity: number;
     }>;
   };
+  /** Set only on the turn that crossed a threshold, so the client can announce it. */
+  leveledTo?: number | null;
+  /** True once the character has fallen; the campaign is closed and takes no more turns. */
+  died?: boolean;
   error?: string;
 };

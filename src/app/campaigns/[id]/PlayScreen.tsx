@@ -10,6 +10,7 @@ import { Panel } from "@/components/ui/Panel";
 import { Divider } from "@/components/ui/Divider";
 import { OrnateButton } from "@/components/ui/OrnateButton";
 import { STATE_SENTINEL, type TurnTail } from "@/lib/game/protocol";
+import { abandonCampaignAction } from "@/lib/game/actions";
 import {
   getRace, getClass, ABILITY_NAMES, abilityModifier, formatModifier, ABILITIES,
   deriveMaxMana, type RaceId, type GenderId, type ClassId,
@@ -69,11 +70,17 @@ export function PlayScreen({
   const [error, setError] = useState<string | null>(null);
   const [lastRoll, setLastRoll] = useState<DiceRoll | null>(null);
   const [freeText, setFreeText] = useState("");
+  const [leveledTo, setLeveledTo] = useState<number | null>(null);
+  const [fallen, setFallen] = useState(initialCharacter.hpCurrent <= 0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   /* Guards the auto-start effect. React 18+ runs effects twice in development,
      which without this fires two opening scenes for every new campaign. */
   const started = useRef(false);
+  /* Guards against a second turn being sent before `busy` has re-rendered —
+     a fast double-click otherwise dispatches two requests, and the server then
+     has to reject one as a conflict after both have already cost a model call. */
+  const inFlight = useRef(false);
 
   const race = getRace(character.race);
   const cls = getClass(character.class);
@@ -91,11 +98,15 @@ export function PlayScreen({
 
   const takeTurn = useCallback(
     async (action: string | null, check?: Choice["check"]) => {
+      if (inFlight.current) return;
+      inFlight.current = true;
+
       setBusy(true);
       setError(null);
       setStreaming("");
       setChoices([]);
       setLastRoll(null);
+      setLeveledTo(null);
 
       /* Show the player's own line immediately rather than waiting for the
          round trip — the model may take 30 seconds on a local CPU. */
@@ -160,6 +171,8 @@ export function PlayScreen({
         setStreaming("");
 
         if (tail.diceRoll) setLastRoll(tail.diceRoll as DiceRoll);
+        if (tail.leveledTo) setLeveledTo(tail.leveledTo);
+        if (tail.died) setFallen(true);
 
         if (tail.character) {
           setCharacter((c) => ({
@@ -183,6 +196,7 @@ export function PlayScreen({
         setStreaming("");
       } finally {
         setBusy(false);
+        inFlight.current = false;
       }
     },
     [campaignId],
@@ -197,7 +211,9 @@ export function PlayScreen({
     }
   }, [initialTurns.length, takeTurn]);
 
-  const dead = character.hpCurrent <= 0;
+  /* Either signal is enough: the server closes the campaign when HP reaches 0
+     and says so on the tail, and the HP it returns says the same thing. */
+  const dead = fallen || character.hpCurrent <= 0;
 
   return (
     <div className="flex min-h-dvh flex-col lg:flex-row">
@@ -241,6 +257,15 @@ export function PlayScreen({
             {busy && !streaming && (
               <p className="text-ash animate-flicker py-8 text-center text-sm italic">
                 The narrator considers…
+              </p>
+            )}
+
+            {leveledTo !== null && (
+              <p
+                role="status"
+                className="border-gold-dim/60 bg-gold/10 text-gold-bright text-glow-gold border px-4 py-3 text-center text-sm"
+              >
+                You are level {leveledTo}. Your wounds close as you grow into it.
               </p>
             )}
 
@@ -312,6 +337,28 @@ export function PlayScreen({
                   <OrnateButton type="submit" disabled={busy || !freeText.trim()} busy={busy}>
                     Act
                   </OrnateButton>
+                </form>
+
+                <form
+                  action={abandonCampaignAction.bind(null, campaignId)}
+                  onSubmit={(e) => {
+                    if (
+                      !window.confirm(
+                        "Abandon this campaign? The chronicle is kept and stays readable, but the run ends here.",
+                      )
+                    ) {
+                      e.preventDefault();
+                    }
+                  }}
+                  className="text-center"
+                >
+                  <button
+                    type="submit"
+                    disabled={busy}
+                    className="label-engraved hover:text-blood-bright disabled:opacity-40"
+                  >
+                    Abandon this campaign
+                  </button>
                 </form>
               </>
             )}

@@ -27,6 +27,7 @@ import { turnStateSchema, type TurnState } from "@/lib/llm/schemas";
 import { chronicleStore } from "@/lib/chronicle/store";
 import { renderChronicle, chronicleForPrompt } from "@/lib/chronicle/format";
 import { resolveCheck } from "@/lib/game/dice";
+import { levelForXp, deriveMaxHpAtLevel, type ClassId } from "@/lib/game/srd";
 import { EMPTY_WORLD_FACTS, type WorldFacts, type Choice, type DiceRoll, type InventoryItem } from "@/lib/game/types";
 
 /**
@@ -45,6 +46,19 @@ import { EMPTY_WORLD_FACTS, type WorldFacts, type Choice, type DiceRoll, type In
 
 /** How often older turns get folded into the running summary. */
 const COMPACT_EVERY = 8;
+
+/**
+ * Thrown when another request has already committed this turn.
+ *
+ * Distinct from a generic failure because the caller's correct response is to
+ * resynchronise rather than retry — the turn it raced against succeeded.
+ */
+export class TurnConflictError extends Error {
+  constructor() {
+    super("That turn has already been taken.");
+    this.name = "TurnConflictError";
+  }
+}
 
 export type CampaignContext = {
   campaign: typeof campaigns.$inferSelect;
@@ -347,6 +361,10 @@ export type CommitResult = {
   choices: Choice[];
   character: Character;
   diceRoll: DiceRoll | null;
+  /** The new level, only when this turn crossed a threshold. */
+  leveledTo: number | null;
+  /** True once the character has fallen and the campaign is closed. */
+  died: boolean;
 };
 
 /**
@@ -365,6 +383,28 @@ export async function commitTurn(args: {
   const campaignId = ctx.campaign.id;
 
   let turnNumber = ctx.campaign.turnCount;
+
+  /* ── Claim this turn's slot before writing anything ──
+     Two requests racing (a double-clicked choice, a second tab) both read the
+     same turnCount and would both commit — duplicate turn numbers, and the XP,
+     HP and item deltas applied twice. Advancing the counter conditionally on
+     the value we read means exactly one of them wins; the loser stops here,
+     having written nothing. The unique index on (campaign_id, turn_number)
+     backs this up at the database level. */
+  const claimedTurnCount = turnNumber + (playerAction ? 2 : 1);
+
+  const claimed = await db
+    .update(campaigns)
+    .set({ turnCount: claimedTurnCount, lastPlayedAt: new Date() })
+    .where(
+      and(
+        eq(campaigns.id, campaignId),
+        eq(campaigns.turnCount, ctx.campaign.turnCount),
+      ),
+    )
+    .returning({ id: campaigns.id });
+
+  if (claimed.length === 0) throw new TurnConflictError();
 
   /* The player's own turn is recorded first so the transcript reads in order
      even if extraction later fails. */
@@ -401,19 +441,45 @@ export async function commitTurn(args: {
 
   /* ── Character deltas ── */
   let character = ctx.character;
+  let leveledTo: number | null = null;
+
   if (state) {
-    const hp = Math.max(0, Math.min(character.hpMax, character.hpCurrent + state.hpDelta));
-    const xp = character.xp + state.xpDelta;
+    const xp = Math.max(0, character.xp + state.xpDelta);
     const inventory = applyInventory(character.inventory ?? [], state);
+
+    /* Advancement is derived from total XP rather than accumulated as its own
+       counter, so it stays correct even if a turn is replayed or an XP delta
+       arrives out of order. */
+    const level = levelForXp(xp);
+    const hpMax = deriveMaxHpAtLevel(
+      character.class as ClassId,
+      character.stats.con,
+      level,
+    );
+
+    /* Gaining a level raises the ceiling and heals by exactly that much — the
+       damage taken this turn still lands, but levelling is not a way to lose
+       hit points, which is what clamping to the old maximum first would do. */
+    const gainedHp = Math.max(0, hpMax - character.hpMax);
+    const hp = Math.max(0, Math.min(hpMax, character.hpCurrent + state.hpDelta + gainedHp));
+
+    if (level > character.level) leveledTo = level;
 
     const updated = await db
       .update(characters)
-      .set({ hpCurrent: hp, xp, inventory })
+      .set({ hpCurrent: hp, hpMax, xp, level, inventory })
       .where(eq(characters.id, character.id))
       .returning();
 
     character = updated[0] ?? character;
   }
+
+  /* ── Death ──
+     Closing the campaign here is what actually ends a run: the turn route
+     refuses any campaign that is not active, so this is the server-side half of
+     the "You have fallen" screen, which on its own is only a client-side
+     courtesy the API would happily narrate straight past. */
+  const died = character.hpCurrent <= 0;
 
   /* ── World facts ── */
   const worldFacts = state
@@ -426,9 +492,11 @@ export async function commitTurn(args: {
       ? state.suggestedTitle
       : ctx.campaign.title;
 
+  /* turnCount and lastPlayedAt were already set by the claim above; this
+     settles what could only be known after the scene was written. */
   await db
     .update(campaigns)
-    .set({ turnCount: turnNumber, lastPlayedAt: new Date(), title })
+    .set({ title, ...(died ? { status: "dead" as const } : {}) })
     .where(eq(campaigns.id, campaignId));
 
   /* ── Compaction, then rebuild the chronicle ── */
@@ -463,7 +531,7 @@ export async function commitTurn(args: {
 
   await chronicleStore().write(campaignId, markdown);
 
-  return { choices, character, diceRoll: roll };
+  return { choices, character, diceRoll: roll, leveledTo, died };
 }
 
 /**
