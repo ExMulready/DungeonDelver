@@ -22,11 +22,9 @@ COPY . .
 # stage needs network access. The running container never calls out to a CDN.
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Placeholder only. Nothing is prerendered against a real database — every route
-# that touches data is dynamic — but the module still parses at build time.
-ENV DATABASE_URL=postgresql://build:build@localhost:5432/build
-ENV AUTH_SECRET=build-time-placeholder-not-used-at-runtime
-
+# No DATABASE_URL / AUTH_SECRET placeholders needed: the Drizzle client connects
+# lazily on first use (see src/lib/db/index.ts), so the build never requires
+# credentials it would not connect with anyway.
 RUN npm run build
 
 

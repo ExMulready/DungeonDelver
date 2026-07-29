@@ -18,7 +18,13 @@ import { signInSchema } from "@/lib/auth/schemas";
 const googleConfigured =
   Boolean(process.env.AUTH_GOOGLE_ID) && Boolean(process.env.AUTH_GOOGLE_SECRET);
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
+/* Lazy config factory rather than a plain object. DrizzleAdapter inspects the
+   database instance the moment it is called, which forces a connection; as a
+   module-scope call that happens while `next build` collects page data, making
+   a database URL a build-time requirement for a build that never queries
+   anything. Deferring construction to the request keeps the adapter identical
+   and lets the build run with no environment at all. */
+export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
   ...authConfig,
 
   adapter: DrizzleAdapter(db, {
@@ -83,7 +89,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       },
     }),
   ],
-});
+}));
 
 /** True when Google sign-in should be offered in the UI. */
 export const isGoogleEnabled = googleConfigured;

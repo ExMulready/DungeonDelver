@@ -1,3 +1,6 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { campaignMemory } from "@/lib/db/schema";
@@ -66,10 +69,14 @@ function safeSegment(campaignId: string): string {
   return campaignId;
 }
 
+/* Imported statically at the top of the file rather than with a dynamic
+   `await import("node:fs/promises")`. A dynamic import here makes Turbopack
+   trace the whole project into the standalone output ("Encountered unexpected
+   file in NFT list"), by way of engine.ts and the turn route — which bloats the
+   very image this app ships as a container. Only the fs-backed store touches
+   these, and it is only ever constructed on the Node runtime. */
 const fsStore: ChronicleStore = {
   async read(campaignId) {
-    const { readFile } = await import("node:fs/promises");
-    const { join } = await import("node:path");
     const file = join(chronicleDir(), safeSegment(campaignId), "chronicle.md");
     try {
       return await readFile(file, "utf8");
@@ -79,8 +86,6 @@ const fsStore: ChronicleStore = {
   },
 
   async write(campaignId, markdown) {
-    const { writeFile, mkdir } = await import("node:fs/promises");
-    const { join } = await import("node:path");
     const dir = join(chronicleDir(), safeSegment(campaignId));
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "chronicle.md"), markdown, "utf8");
