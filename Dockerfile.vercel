@@ -1,9 +1,23 @@
 # syntax=docker/dockerfile:1
+#
+# Vercel container image.
+#
+# Vercel builds this by filename convention — `Dockerfile.vercel` at the project
+# root — and runs the result as a Function backed by an OCI image:
+# https://vercel.com/docs/functions/container-images
+#
+# Kept separate from ./Dockerfile rather than parameterised with build args,
+# because the two targets differ in ways that are not a flag:
+#
+#   ./Dockerfile         Compose. Ollama + a Postgres container, and a bind-mounted
+#                        /data volume so chronicles can be read from the host.
+#   ./Dockerfile.vercel  Vercel. Supabase + Groq, no writable disk at all, and a
+#                        port assigned at runtime rather than chosen.
+#
+# A Vercel container is still a stateless request-serving unit: it has no
+# sidecars, so CHRONICLE_STORE must be `pg` and LLM_PROVIDER must be `groq`.
+# There is nowhere for a chronicle file or a local model to live.
 
-# Debian slim rather than Alpine, to stay on the same libc as the Vercel image.
-# Nothing in the tree is a native binding — passwords use scrypt from
-# node:crypto, see src/lib/auth/password.ts — so this is about parity between
-# the two targets, not about linking anything.
 FROM node:22-bookworm-slim AS base
 
 
@@ -24,9 +38,8 @@ COPY . .
 # stage needs network access. The running container never calls out to a CDN.
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# No DATABASE_URL / AUTH_SECRET placeholders needed: the Drizzle client connects
-# lazily on first use (see src/lib/db/index.ts), so the build never requires
-# credentials it would not connect with anyway.
+# No database credentials needed to build: the Drizzle client connects lazily on
+# first use (src/lib/db/index.ts) and no route is prerendered against real data.
 RUN npm run build
 
 
@@ -36,7 +49,6 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
 RUN groupadd --system --gid 1001 nodejs \
@@ -48,14 +60,10 @@ COPY --from=builder --chown=delver:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=delver:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=delver:nodejs /app/public ./public
 
-# Chronicles are bind-mounted here in Compose so you can read them from the host.
-RUN mkdir -p /data/campaigns && chown -R delver:nodejs /data
-VOLUME /data
-
 USER delver
-EXPOSE 3000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-
+# No ENV PORT and no EXPOSE of a fixed port on purpose: Vercel assigns $PORT at
+# runtime, and Next's standalone server reads it. Hardcoding 3000 the way the
+# Compose image does would bind the wrong port and the container would never
+# pass a health check.
 CMD ["node", "server.js"]

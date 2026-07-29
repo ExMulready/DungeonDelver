@@ -15,12 +15,14 @@ assets anywhere in the interface, including the character portraits.
 ## How it runs
 
 One codebase, two deployment targets, chosen entirely by environment variable.
+Both run as containers; they differ in what is around the container.
 
 |                | Docker Compose (free, offline) | Vercel (public)          |
 | -------------- | ------------------------------ | ------------------------ |
 | Narrator       | Ollama `qwen3.5:2b`            | Groq `llama-3.3-70b`     |
 | Database       | Postgres container             | Supabase Postgres        |
 | Chronicle      | Real `.md` files + DB mirror   | DB text column           |
+| Image          | [`Dockerfile`](Dockerfile)     | [`Dockerfile.vercel`](Dockerfile.vercel) |
 
 Three seams make that work, and nothing else in the app knows which target it
 is on:
@@ -179,6 +181,39 @@ ALTER TABLE public.campaign_memory     ENABLE ROW LEVEL SECURITY;
 
 Without this, `passwordHash` and OAuth `access_token`/`refresh_token` are
 readable by anyone with the anon key, which is public by design.
+
+---
+
+## Deploying to Vercel
+
+Vercel builds [`Dockerfile.vercel`](Dockerfile.vercel) by filename convention
+and runs it as a Function backed by an OCI image
+([docs](https://vercel.com/docs/functions/container-images)).
+
+A Vercel container is still a stateless request-serving unit — it brings no
+sidecars along. There is nowhere for a Postgres volume or a warm 1.4 GB local
+model to live, so the managed services are not optional there:
+
+```
+LLM_PROVIDER=groq          # ollama has nothing to talk to
+CHRONICLE_STORE=pg         # there is no writable disk
+DATABASE_URL=...:6543/...  # Supabase transaction pooler
+GROQ_API_KEY=...
+AUTH_SECRET=...            # openssl rand -base64 32
+AUTH_TRUST_HOST=true
+```
+
+`AUTH_TRUST_HOST` is not optional either: without it every request fails with
+`UntrustedHost` before it reaches a page.
+
+Use the **transaction pooler** (port 6543) rather than a direct connection.
+[`src/lib/db/index.ts`](src/lib/db/index.ts) detects that port and disables
+prepared statements, which PgBouncer cannot hold across multiplexed
+connections.
+
+One ceiling worth knowing: the turn route asks for `maxDuration = 300`, but
+Hobby caps functions at 60 seconds. Groq finishes a turn in a few seconds, so
+this only bites if you point the deploy at something slower.
 
 ---
 
