@@ -7,7 +7,7 @@ import { db } from "@/lib/db";
 import { campaignTurns } from "@/lib/db/schema";
 import { loadCampaignContext } from "@/lib/game/engine";
 import { PlayScreen } from "./PlayScreen";
-import type { Choice } from "@/lib/game/types";
+import { EMPTY_EQUIPMENT, type Choice } from "@/lib/game/types";
 
 export const dynamic = "force-dynamic";
 
@@ -62,12 +62,15 @@ export default async function CampaignPage({
         portraitSeed: ctx.character.portraitSeed,
         stats: ctx.character.stats,
         inventory: ctx.character.inventory ?? [],
+        powerCooldowns: ctx.character.powerCooldowns ?? {},
+        equipment: ctx.character.equipment ?? EMPTY_EQUIPMENT,
       }}
       initialTurns={allTurns.map((t) => ({
         turnNumber: t.turnNumber,
         role: t.role,
         content: t.content,
         diceRoll: t.diceRoll ?? null,
+        sceneArtCaption: t.sceneArtCaption ?? null,
       }))}
       initialChoices={(lastNarratorTurn?.choices ?? []) as Choice[]}
     />

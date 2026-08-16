@@ -43,13 +43,26 @@
 
   /* Typography — wired to next/font in layout.tsx, so these self-host. */
   --font-display: var(--font-cinzel), "Times New Roman", serif;
-  --font-body: var(--font-fell), Georgia, serif;
+  --font-body: var(--font-body-serif), Georgia, serif;
 
   --radius-panel: 2px;
 
   --animate-flicker: flicker 4s ease-in-out infinite;
   --animate-ember: ember 14s linear infinite;
   --animate-pulse-slow: pulse-slow 3.5s ease-in-out infinite;
+
+  /* ── HUD v2 — parchment story page and carved outer chrome ── */
+  --color-page:         #c9b48d;
+  --color-page-mid:     #c0a97e;
+  --color-page-deep:    #ab9370;
+  --color-page-ink:     #2f2418;   /* body prose */
+  --color-page-ink-dim: #4a3a2a;   /* player action line, italics */
+  --color-page-edge:    rgba(74, 52, 26, 0.5);
+  --color-arcane:       #4a3a72;   /* scene titles, focus ring on the page */
+
+  /* Frame — heavier than --color-bevel, used for the outer carved chrome */
+  --color-frame:     #4a3c2a;
+  --color-frame-lit: #6b5a3c;
 }
 
 @keyframes flicker {
@@ -75,6 +88,20 @@
 @keyframes scroll-in {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── DiceOverlay ── */
+@keyframes dieTumble {
+  0%   { transform: translateY(-190px) rotateX(0deg) rotateZ(0deg); }
+  70%  { transform: translateY(0) rotateX(980deg) rotateZ(690deg); }
+  86%  { transform: translateY(-14px) rotateX(1140deg) rotateZ(770deg); }
+  100% { transform: translateY(0) rotateX(1260deg) rotateZ(880deg); }
+}
+@keyframes dieShadow {
+  0%   { transform: scale(1.8); opacity: 0.12; }
+  70%  { transform: scale(1); opacity: 0.5; }
+  86%  { transform: scale(1.1); opacity: 0.4; }
+  100% { transform: scale(0.92); opacity: 0.55; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -394,6 +421,88 @@
   /* Narration paragraphs fade in as the model writes them. */
   .scroll-in {
     animation: scroll-in 420ms ease-out both;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     HUD v2 — carved outer chrome + warm parchment story page
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  /* ── Carved frame ────────────────────────────────────────────────────────
+     Panel chrome shared by every column: title bar, character block,
+     inventory, story frame, spells, attributes, hotbar. Heavier and darker
+     than .panel — this is load-bearing stone, not a translucent overlay. */
+  .frame-carved {
+    position: relative;
+    background: linear-gradient(180deg, #1d1712, #120e0a 55%, #0a0806);
+    border: 1px solid var(--color-frame);
+    box-shadow:
+      inset 0 1px 0 rgba(199, 179, 119, 0.1),
+      inset 0 -2px 8px rgba(0, 0, 0, 0.8),
+      0 2px 10px rgba(0, 0, 0, 0.7);
+  }
+
+  /* ── Parchment page ──────────────────────────────────────────────────────
+     The narration surface. Aged and warm — never white, so it holds its own
+     against the carved stone around it without blowing out the palette. */
+  .page-parchment {
+    position: relative;
+    background:
+      radial-gradient(ellipse at 20% 10%, rgba(255, 244, 214, 0.35), transparent 55%),
+      radial-gradient(ellipse at 85% 90%, rgba(120, 92, 52, 0.25), transparent 60%),
+      linear-gradient(165deg, #c9b48d, #c0a97e 45%, #ab9370);
+    border: 1px solid var(--color-frame-lit);
+    box-shadow: inset 0 0 70px rgba(74, 52, 26, 0.55);
+    color: var(--color-page-ink);
+  }
+  .page-parchment::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.09;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* ── Plaque ───────────────────────────────────────────────────────────────
+     Choice row: cast-metal plaque laid on top of the parchment. */
+  .plaque {
+    position: relative;
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: 14px;
+    padding: 8px 16px 8px 6px;
+    text-align: left;
+    background: linear-gradient(180deg, #1e1811, #14100b 55%, #0d0a07);
+    border: 1px solid #5c4a30;
+    transition: border-color 140ms ease, box-shadow 160ms ease, transform 100ms ease;
+    cursor: pointer;
+  }
+  .plaque:hover:not(:disabled) {
+    border-color: #c7b377;
+    box-shadow: 0 0 20px rgba(199, 179, 119, 0.25);
+    transform: translateY(-1px);
+  }
+  .plaque:active:not(:disabled) {
+    transform: translateY(1px);
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.75);
+  }
+  .plaque:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  /* ── Slot ─────────────────────────────────────────────────────────────────
+     Inventory / equipment cell: a recessed pocket in the stone. */
+  .slot {
+    position: relative;
+    background: linear-gradient(180deg, #171208, #0b0806);
+    border: 1px solid #322818;
+    box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.8);
+  }
+  .slot-hotbar {
+    background: linear-gradient(180deg, #241c12, #0b0806);
+    border: 1px solid var(--color-frame);
   }
 }
 

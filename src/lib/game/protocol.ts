@@ -24,6 +24,8 @@ export type TurnTail = {
     success: boolean;
     critical: "hit" | "miss" | null;
   } | null;
+  leveledUp?: boolean;
+  sceneArtCaption?: string | null;
   character?: {
     hpCurrent: number;
     hpMax: number;
@@ -36,6 +38,8 @@ export type TurnTail = {
       description: string;
       quantity: number;
     }>;
+    /** Turns remaining before each power is usable again; see powers.ts. */
+    powerCooldowns: Record<string, number>;
   };
   error?: string;
 };

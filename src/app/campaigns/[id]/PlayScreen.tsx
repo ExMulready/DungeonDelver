@@ -1,21 +1,23 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import Link from "next/link";
 
-import { Portrait } from "@/components/portrait/Portrait";
-import { generatePortrait } from "@/lib/portraits/spec";
-import { Orb } from "@/components/ui/Orb";
-import { Panel } from "@/components/ui/Panel";
-import { Divider } from "@/components/ui/Divider";
-import { OrnateButton } from "@/components/ui/OrnateButton";
 import { STATE_SENTINEL, type TurnTail } from "@/lib/game/protocol";
-import {
-  getRace, getClass, ABILITY_NAMES, abilityModifier, formatModifier, ABILITIES,
-  deriveMaxMana, type RaceId, type GenderId, type ClassId,
-} from "@/lib/game/srd";
-import type { AbilityScores, Choice, DiceRoll, InventoryItem } from "@/lib/game/types";
-import { cn } from "@/lib/cn";
+import type { AbilityScores, Choice, DiceRoll, InventoryItem, PowerCooldowns } from "@/lib/game/types";
+
+import { PlayShell } from "@/components/game/PlayShell";
+import { TitleBar } from "@/components/game/TitleBar";
+import { CharacterBlock } from "@/components/game/CharacterBlock";
+import { InventoryPanel } from "@/components/game/InventoryPanel";
+import { StoryPage } from "@/components/game/StoryPage";
+import { SpellsPanel } from "@/components/game/SpellsPanel";
+import { AttributesPanel } from "@/components/game/AttributesPanel";
+import { Hotbar } from "@/components/game/Hotbar";
+import { DiceOverlay } from "@/components/game/DiceOverlay";
+import { LevelUpToast } from "@/components/game/LevelUpToast";
+import { POWERS, powersForClass } from "@/lib/game/powers";
+import { useItem, equipItem, unequipItem } from "@/lib/game/actions";
+import type { Equipment, EquipmentSlot } from "@/lib/game/types";
 
 type CharacterView = {
   name: string;
@@ -30,6 +32,8 @@ type CharacterView = {
   portraitSeed: number;
   stats: AbilityScores;
   inventory: InventoryItem[];
+  powerCooldowns: PowerCooldowns;
+  equipment: Equipment;
 };
 
 type TurnView = {
@@ -37,15 +41,7 @@ type TurnView = {
   role: string;
   content: string;
   diceRoll: DiceRoll | null;
-};
-
-const RARITY_CLASS: Record<string, string> = {
-  common: "rarity-common",
-  magic: "rarity-magic",
-  rare: "rarity-rare",
-  unique: "rarity-unique",
-  set: "rarity-set",
-  crafted: "rarity-crafted",
+  sceneArtCaption?: string | null;
 };
 
 export function PlayScreen({
@@ -68,41 +64,35 @@ export function PlayScreen({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRoll, setLastRoll] = useState<DiceRoll | null>(null);
-  const [freeText, setFreeText] = useState("");
+  const [leveledUpTo, setLeveledUpTo] = useState<number | null>(null);
+  /* True from the moment a check-gated choice is picked until the dice
+     overlay finishes its settle-and-hold sequence. Drives DiceOverlay. */
+  const [rollInFlight, setRollInFlight] = useState(false);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
   /* Guards the auto-start effect. React 18+ runs effects twice in development,
      which without this fires two opening scenes for every new campaign. */
   const started = useRef(false);
 
-  const race = getRace(character.race);
-  const cls = getClass(character.class);
-  const maxMana = deriveMaxMana(character.class as ClassId, character.stats);
-
-  /* Follow the text as it streams, but only while it is streaming — hijacking
-     scroll while the player is reading back an earlier scene is maddening. */
-  useEffect(() => {
-    if (!busy) return;
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [streaming, busy]);
-
-  const takeTurn = useCallback(
-    async (action: string | null, check?: Choice["check"]) => {
+  /**
+   * Shared network core: posts a turn request body, streams the reply, and
+   * applies the resulting state. Used by both takeTurn (free text / choices)
+   * and activatePower (hotbar). `optimisticLine`, when given, is shown as the
+   * player's own line immediately rather than waiting for the round trip —
+   * the model may take 30 seconds on a local CPU.
+   */
+  const runTurn = useCallback(
+    async (body: Record<string, unknown>, optimisticLine: string | null, isCheck: boolean) => {
       setBusy(true);
       setError(null);
       setStreaming("");
       setChoices([]);
       setLastRoll(null);
+      if (isCheck) setRollInFlight(true);
 
-      /* Show the player's own line immediately rather than waiting for the
-         round trip — the model may take 30 seconds on a local CPU. */
-      if (action) {
+      if (optimisticLine) {
         setTurns((prev) => [
           ...prev,
-          { turnNumber: -1, role: "player", content: action, diceRoll: null },
+          { turnNumber: -1, role: "player", content: optimisticLine, diceRoll: null },
         ]);
       }
 
@@ -110,7 +100,7 @@ export function PlayScreen({
         const res = await fetch(`/api/campaigns/${campaignId}/turn`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(action ? { action, check } : {}),
+          body: JSON.stringify(body),
         });
 
         if (!res.ok || !res.body) {
@@ -155,6 +145,7 @@ export function PlayScreen({
             role: "narrator",
             content: prose,
             diceRoll: (tail.diceRoll as DiceRoll | null) ?? null,
+            sceneArtCaption: tail.sceneArtCaption ?? null,
           },
         ]);
         setStreaming("");
@@ -169,7 +160,9 @@ export function PlayScreen({
             xp: tail.character!.xp,
             level: tail.character!.level,
             inventory: tail.character!.inventory as InventoryItem[],
+            powerCooldowns: (tail.character!.powerCooldowns as PowerCooldowns | undefined) ?? c.powerCooldowns,
           }));
+          if (tail.leveledUp) setLeveledUpTo(tail.character.level);
         }
 
         setChoices(
@@ -181,9 +174,79 @@ export function PlayScreen({
       } catch (err) {
         setError(err instanceof Error ? err.message : "Something went wrong.");
         setStreaming("");
+        setRollInFlight(false);
       } finally {
         setBusy(false);
       }
+    },
+    [campaignId],
+  );
+
+  const takeTurn = useCallback(
+    (action: string | null, check?: Choice["check"]) =>
+      runTurn(action ? { action, check } : {}, action, !!check),
+    [runTurn],
+  );
+
+  const activatePower = useCallback(
+    (powerId: string) => {
+      const power = POWERS.find((p) => p.id === powerId);
+      return runTurn({ powerId }, power?.name ?? null, false);
+    },
+    [runTurn],
+  );
+
+  /* Unlike takeTurn/activatePower, drinking a potion is not a narrated turn —
+     it calls the useItem server action directly rather than streaming through
+     /api/campaigns/[id]/turn. */
+  const drinkPotion = useCallback(
+    async (itemId: string) => {
+      const result = await useItem(campaignId, itemId);
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      setCharacter((c) => ({
+        ...c,
+        hpCurrent: result.hpCurrent ?? c.hpCurrent,
+        hpMax: result.hpMax ?? c.hpMax,
+        inventory: (result.inventory as InventoryItem[]) ?? c.inventory,
+      }));
+    },
+    [campaignId],
+  );
+
+  /* Equipping is likewise a direct server action, not a narrated turn. */
+  const equipItemHandler = useCallback(
+    async (itemId: string) => {
+      const result = await equipItem(campaignId, itemId);
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      setCharacter((c) => ({
+        ...c,
+        ac: result.ac ?? c.ac,
+        equipment: result.equipment ?? c.equipment,
+        inventory: result.inventory ?? c.inventory,
+      }));
+    },
+    [campaignId],
+  );
+
+  const unequipItemHandler = useCallback(
+    async (slot: EquipmentSlot) => {
+      const result = await unequipItem(campaignId, slot);
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      setCharacter((c) => ({
+        ...c,
+        ac: result.ac ?? c.ac,
+        equipment: result.equipment ?? c.equipment,
+        inventory: result.inventory ?? c.inventory,
+      }));
     },
     [campaignId],
   );
@@ -199,237 +262,83 @@ export function PlayScreen({
 
   const dead = character.hpCurrent <= 0;
 
-  return (
-    <div className="flex min-h-dvh flex-col lg:flex-row">
-      {/* ── Chronicle ── */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="border-bevel flex items-center justify-between border-b px-5 py-3">
-          <Link href="/campaigns" className="label-engraved hover:text-gold shrink-0">
-            ← Campaigns
-          </Link>
-          <h1 className="mx-4 truncate text-center text-lg">{title}</h1>
-          <span className="label-engraved shrink-0 tabular-nums">
-            {turns.length} turns
-          </span>
-        </header>
+  /* HUD v2 shows exactly one scene: the most recent narrator turn, with the
+     player's own line (if any) sitting above it. Older turns stay in the
+     server's chronicle memory — the model still remembers them — they are
+     simply not re-rendered on screen. */
+  let lastNarratorIndex = -1;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (turns[i].role === "narrator") {
+      lastNarratorIndex = i;
+      break;
+    }
+  }
+  const lastNarratorTurn = lastNarratorIndex === -1 ? null : turns[lastNarratorIndex];
+  const precedingPlayerTurn =
+    lastNarratorIndex > 0 && turns[lastNarratorIndex - 1].role === "player"
+      ? turns[lastNarratorIndex - 1]
+      : null;
+  const trailingPlayerTurn =
+    turns.length > 0 && turns[turns.length - 1].role === "player" ? turns[turns.length - 1] : null;
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6 sm:px-8">
-          <div className="mx-auto max-w-2xl space-y-5">
-            {turns.map((turn, i) => (
-              <div key={`${turn.turnNumber}-${i}`} className="scroll-in">
-                {turn.role === "player" ? (
-                  <div className="border-gold-dim/40 bg-raised/30 border-l-2 py-1 pl-4">
-                    <p className="label-engraved mb-1">{character.name}</p>
-                    <p className="text-gold/90 text-sm italic">{turn.content}</p>
-                  </div>
-                ) : (
-                  <div className="vellum px-5 py-5 sm:px-7">
-                    {turn.diceRoll && <RollBanner roll={turn.diceRoll} />}
-                    <Prose text={turn.content} />
-                  </div>
-                )}
-              </div>
-            ))}
+  const playerAction = busy ? (trailingPlayerTurn?.content ?? null) : (precedingPlayerTurn?.content ?? null);
 
-            {streaming && (
-              <div className="vellum px-5 py-5 sm:px-7">
-                <Prose text={streaming} />
-                <span className="bg-gold ml-0.5 inline-block h-4 w-2 animate-pulse align-middle" />
-              </div>
-            )}
-
-            {busy && !streaming && (
-              <p className="text-ash animate-flicker py-8 text-center text-sm italic">
-                The narrator considers…
-              </p>
-            )}
-
-            {error && (
-              <p role="alert" className="border-blood/50 bg-blood/10 text-blood-bright border px-4 py-3 text-sm">
-                {error}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* ── Choices ── */}
-        <div className="border-bevel bg-pitch/80 border-t px-4 py-4 sm:px-8">
-          <div className="mx-auto max-w-2xl space-y-3">
-            {dead ? (
-              <Panel className="text-center">
-                <p className="text-blood-bright text-xl">You have fallen.</p>
-                <p className="text-ash mt-1 text-sm italic">
-                  The chronicle keeps what you did. It does not give it back.
-                </p>
-                <Link href="/campaigns" className="mt-4 inline-block">
-                  <OrnateButton variant="blood">Return to the gate</OrnateButton>
-                </Link>
-              </Panel>
-            ) : (
-              <>
-                {choices.length > 0 && !busy && (
-                  <div className="grid gap-2">
-                    {choices.map((choice) => (
-                      <button
-                        key={choice.id}
-                        onClick={() => takeTurn(choice.label, choice.check)}
-                        className="btn-ornate px-4 py-3 text-left text-sm normal-case"
-                      >
-                        <span className="text-gold-bright block">{choice.label}</span>
-                        {choice.hint && (
-                          <span className="text-ash mt-0.5 block text-xs italic normal-case">
-                            {choice.hint}
-                          </span>
-                        )}
-                        {choice.check && (
-                          <span className="label-engraved mt-1 block">
-                            {ABILITY_NAMES[choice.check.ability]} check · DC {choice.check.dc}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const text = freeText.trim();
-                    if (!text || busy) return;
-                    setFreeText("");
-                    void takeTurn(text);
-                  }}
-                  className="flex gap-2"
-                >
-                  <input
-                    value={freeText}
-                    onChange={(e) => setFreeText(e.target.value)}
-                    placeholder="Or do something else entirely…"
-                    maxLength={600}
-                    disabled={busy}
-                    className="input-ornate flex-1 px-3 py-2.5 text-sm"
-                  />
-                  <OrnateButton type="submit" disabled={busy || !freeText.trim()} busy={busy}>
-                    Act
-                  </OrnateButton>
-                </form>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ── HUD ── */}
-      <aside className="border-bevel bg-pitch/60 shrink-0 border-t p-4 lg:w-80 lg:border-t-0 lg:border-l lg:overflow-y-auto">
-        <div className="flex items-start gap-4 lg:flex-col lg:items-stretch">
-          <Portrait
-            spec={generatePortrait(
-              character.race as RaceId,
-              character.gender as GenderId,
-              character.portraitSeed,
-            )}
-            size={132}
-            className="mx-auto shrink-0"
-          />
-
-          <div className="min-w-0 flex-1 lg:text-center">
-            <p className="text-gold-bright truncate text-lg">{character.name}</p>
-            <p className="text-ash text-xs italic">
-              Level {character.level} {race.name} {cls.name}
-            </p>
-
-            <div className="mt-3 flex items-start justify-center gap-5">
-              <Orb kind="health" current={character.hpCurrent} max={character.hpMax} size={64} />
-              {maxMana > 0 && <Orb kind="mana" current={maxMana} max={maxMana} size={64} />}
-            </div>
-
-            <div className="label-engraved mt-3 flex justify-center gap-4">
-              <span>AC {character.ac}</span>
-              <span>XP {character.xp}</span>
-            </div>
-          </div>
-        </div>
-
-        {lastRoll && (
-          <>
-            <Divider className="my-4" />
-            <RollBanner roll={lastRoll} />
-          </>
-        )}
-
-        <Divider className="my-4" />
-        <p className="label-engraved mb-2">Abilities</p>
-        <div className="grid grid-cols-2 gap-1.5">
-          {ABILITIES.map((a) => (
-            <div key={a} className="bg-panel/60 border-bevel flex justify-between border px-2 py-1 text-xs">
-              <span className="text-ash">{ABILITY_NAMES[a].slice(0, 3).toUpperCase()}</span>
-              <span className="tabular-nums">
-                {character.stats[a]}{" "}
-                <span className="text-gold-dim">
-                  {formatModifier(abilityModifier(character.stats[a]))}
-                </span>
-              </span>
-            </div>
-          ))}
-        </div>
-
-        <Divider className="my-4" />
-        <p className="label-engraved mb-2">Carried</p>
-        {character.inventory.length === 0 ? (
-          <p className="text-ash text-xs italic">Nothing worth naming.</p>
-        ) : (
-          <ul className="space-y-1">
-            {character.inventory.map((item) => (
-              <li key={item.id} className="text-xs">
-                <span className={cn(RARITY_CLASS[item.rarity] ?? "rarity-common")}>
-                  {item.name}
-                  {item.quantity > 1 && ` ×${item.quantity}`}
-                </span>
-                {item.description && (
-                  <span className="text-ash block text-[11px] italic">{item.description}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </aside>
-    </div>
-  );
-}
-
-/** Splits narration into paragraphs. The model emits blank-line separated prose. */
-function Prose({ text }: { text: string }) {
   return (
     <>
-      {text.split(/\n{2,}/).map((para, i) => (
-        <p key={i} className="mb-3 leading-relaxed last:mb-0">
-          {para.trim()}
-        </p>
-      ))}
-    </>
-  );
-}
-
-function RollBanner({ roll }: { roll: DiceRoll }) {
-  const crit = roll.critical;
-  return (
-    <div
-      className={cn(
-        "mb-4 border px-3 py-2 text-xs",
-        roll.success
-          ? "border-gold-dim/50 bg-gold/5 text-gold"
-          : "border-blood/50 bg-blood/10 text-blood-bright",
+      {leveledUpTo !== null && (
+        <LevelUpToast level={leveledUpTo} onDismiss={() => setLeveledUpTo(null)} />
       )}
-    >
-      <span className="label-engraved">
-        {ABILITY_NAMES[roll.ability]} · DC {roll.dc}
-      </span>
-      <span className="ml-2 tabular-nums">
-        d20 {roll.d20} {formatModifier(roll.modifier)} = <strong>{roll.total}</strong>
-      </span>
-      <span className="ml-2 font-bold">
-        {crit === "hit" ? "CRITICAL SUCCESS" : crit === "miss" ? "CRITICAL FAILURE" : roll.success ? "Success" : "Failure"}
-      </span>
-    </div>
+      <PlayShell
+        titleBar={<TitleBar title={title} turns={turns.length} />}
+        left={
+          <>
+            <CharacterBlock character={character} />
+            <InventoryPanel
+              inventory={character.inventory}
+              equipment={character.equipment}
+              onEquip={equipItemHandler}
+              onUnequip={unequipItemHandler}
+            />
+          </>
+        }
+        centre={
+          <StoryPage
+            title={title}
+            scene={lastNarratorTurn?.content ?? ""}
+            sceneArtCaption={lastNarratorTurn?.sceneArtCaption ?? null}
+            playerAction={playerAction}
+            playerName={character.name}
+            streaming={streaming}
+            busy={busy}
+            dead={dead}
+            error={error}
+            choices={choices}
+            onChoose={(label, check) => void takeTurn(label, check)}
+            onFreeText={(text) => void takeTurn(text)}
+          />
+        }
+        right={
+          <>
+            <SpellsPanel classId={character.class} />
+            <AttributesPanel stats={character.stats} />
+          </>
+        }
+        hotbar={
+          <Hotbar
+            inventory={character.inventory}
+            powers={powersForClass(character.class)}
+            cooldowns={character.powerCooldowns}
+            onUsePower={activatePower}
+            onDrinkPotion={drinkPotion}
+            busy={busy}
+          />
+        }
+        overlay={
+          rollInFlight && (
+            <DiceOverlay roll={lastRoll} onDone={() => setRollInFlight(false)} />
+          )
+        }
+      />
+    </>
   );
 }

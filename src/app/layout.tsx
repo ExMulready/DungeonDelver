@@ -1,22 +1,22 @@
 import type { Metadata, Viewport } from "next";
-import { Cinzel_Decorative, IM_Fell_English } from "next/font/google";
+import { Cinzel, EB_Garamond } from "next/font/google";
 import { RegisterSW } from "@/components/pwa/RegisterSW";
 import "./globals.css";
 
 /* next/font downloads and self-hosts these at BUILD time. The running app never
    contacts a font CDN, which is what lets the offline PWA render correctly. */
-const cinzel = Cinzel_Decorative({
+const cinzel = Cinzel({
   subsets: ["latin"],
-  weight: ["400", "700", "900"],
+  weight: ["400", "600", "700"],
   variable: "--font-cinzel",
   display: "swap",
 });
 
-const fell = IM_Fell_English({
+const garamond = EB_Garamond({
   subsets: ["latin"],
-  weight: ["400"],
+  weight: ["400", "500"],
   style: ["normal", "italic"],
-  variable: "--font-fell",
+  variable: "--font-body-serif",
   display: "swap",
 });
 
@@ -56,7 +56,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${cinzel.variable} ${fell.variable}`}>
+    <html lang="en" className={`${cinzel.variable} ${garamond.variable}`}>
       <body className="antialiased">
         <div className="above-atmosphere">{children}</div>
         <RegisterSW />

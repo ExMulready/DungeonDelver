@@ -15,6 +15,12 @@ import {
   type GenderId,
   type ToneId,
 } from "./srd";
+import type { ChoiceIcon } from "./types";
+
+const CHOICE_ICON_IDS: ChoiceIcon[] = ["arcane", "parley", "camp", "travel", "violence"];
+
+/* z.enum needs a non-empty tuple; reused by the turn-check body schema below. */
+export const choiceIconSchema = z.enum(CHOICE_ICON_IDS as [ChoiceIcon, ...ChoiceIcon[]]);
 
 /* z.enum needs a non-empty tuple; the SRD lists are plain arrays. */
 const tuple = <T extends string>(arr: T[]) => arr as [T, ...T[]];

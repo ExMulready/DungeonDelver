@@ -114,14 +114,14 @@ ${scene}
 
 Return an object with these fields:
 
-- "choices": 2 to 4 actions ${characterName} could take next. Each needs a "label" written as a short imperative in second person, for example "Force the iron door". Add "hint" only when it clarifies a real difference between options. Add "check" only when the outcome is genuinely uncertain — give "ability" (one of str, dex, con, int, wis, cha), "dc" between 5 and 30, and a short "reason". Straightforward actions need no check. At least one option should not require a check.
+- "choices": 2 to 4 actions ${characterName} could take next. Each needs a "label" written as a short imperative in second person, for example "Force the iron door". Add "hint" only when it clarifies a real difference between options. Add "check" only when the outcome is genuinely uncertain — give "ability" (one of str, dex, con, int, wis, cha), "dc" between 5 and 30, and a short "reason". Straightforward actions need no check. At least one option should not require a check. Tag each with the "icon" that best matches its nature: "arcane" for magic or the supernatural, "parley" for talking or persuasion, "camp" for resting or preparation, "violence" for combat or force, "travel" for movement or exploration — anything that doesn't clearly fit one of the others.
 - "hpDelta": hit points gained or lost IN THIS SCENE. Negative for damage. 0 if nothing happened. Only count harm actually described.
-- "xpDelta": experience earned in this scene, 0 to 200 for ordinary progress. 0 if nothing was overcome.
-- "itemsGained": items ${characterName} actually took possession of. Empty if none. Do not invent loot that was not described.
+- "itemsGained": items ${characterName} actually took possession of. Empty if none. Do not invent loot that was not described. Give a healing potion or draught "kind": "potion:heal" — that is what lets it actually be drunk later. Give wearable or wieldable gear one of these exact kinds so it can be equipped: "weapon", "offhand", "shield", "armor", "head", "shoulders", "hands", "boots", "cloak", "amulet", "ring", "belt". Anything else can use a short free-form kind like "key", "relic", or "reagent", or omit it.
 - "itemsLost": names of items used up or taken away. Empty if none.
 - "npcs": named characters who appeared, with role, disposition and status. Only those actually named in the scene.
 - "locations": named places, with a one-line description.
 - "quests": objectives that were started, advanced, completed or failed.
+- "sceneArtCaption": a short (under 12 words) caption for the scene's mood or setting, for example "A rain-slicked alley behind the tannery". No art is generated from this yet — it is shown as text.
 
 Report only what the scene states. Do not speculate, and do not carry over anything from earlier scenes. Return JSON only.`;
 }

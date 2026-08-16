@@ -10,7 +10,10 @@ import {
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import type { AdapterAccountType } from "next-auth/adapters";
-import type { AbilityScores, InventoryItem, DiceRoll, Choice, WorldFacts } from "@/lib/game/types";
+import type {
+  AbilityScores, InventoryItem, DiceRoll, Choice, WorldFacts, Equipment, PowerCooldowns,
+} from "@/lib/game/types";
+import { EMPTY_EQUIPMENT } from "@/lib/game/types";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Auth.js tables
@@ -114,6 +117,16 @@ export const characters = pgTable(
 
     inventory: jsonb("inventory").$type<InventoryItem[]>().notNull().default([]),
 
+    /* Paperdoll. Keys are the twelve slots in src/lib/game/types.ts; a missing
+       or null value means the slot is empty. */
+    equipment: jsonb("equipment").$type<Equipment>().notNull().default(EMPTY_EQUIPMENT),
+
+    /* Turns remaining before each class power (src/lib/game/powers.ts) is
+       usable again. A power absent from this map is off cooldown. Server-owned
+       — decremented once per resolved turn in src/lib/game/engine.ts — so the
+       client can request activation but can never fake a ready timer. */
+    powerCooldowns: jsonb("power_cooldowns").$type<PowerCooldowns>().notNull().default({}),
+
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   },
   (t) => [index("character_user_idx").on(t.userId)],
@@ -164,6 +177,11 @@ export const campaignTurns = pgTable(
     /* Only set when a check was called for. Rolled server-side — see
        src/lib/game/dice.ts — never by the model. */
     diceRoll: jsonb("dice_roll").$type<DiceRoll>(),
+
+    /* Scene art. No image generation exists yet — sceneArtUrl stays null and
+       StoryPage renders the empty carved frame with the caption beneath it. */
+    sceneArtUrl: text("scene_art_url"),
+    sceneArtCaption: text("scene_art_caption"),
 
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   },
