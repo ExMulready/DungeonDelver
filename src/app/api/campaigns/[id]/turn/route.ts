@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { loadCampaignContext, streamScene, commitTurn } from "@/lib/game/engine";
+import { getPower } from "@/lib/game/powers";
 import type { Choice } from "@/lib/game/types";
 import { STATE_SENTINEL } from "@/lib/game/protocol";
 import { z } from "zod";
@@ -38,6 +39,10 @@ const bodySchema = z.object({
       reason: z.string().max(160),
     })
     .optional(),
+  /* Activating a class power instead of a free action. Mutually exclusive
+     with action/check — validated against the character server-side below,
+     since the client cannot be trusted to know its own cooldowns. */
+  powerId: z.string().min(1).max(60).optional(),
 });
 
 export async function POST(
@@ -67,9 +72,27 @@ export async function POST(
     return Response.json({ error: "That campaign is closed." }, { status: 409 });
   }
 
-  const request = parsed.data.action
-    ? { action: parsed.data.action, check: parsed.data.check }
-    : null;
+  let request: { action: string; check?: typeof parsed.data.check } | null;
+  let activatePowerId: string | undefined;
+
+  if (parsed.data.powerId) {
+    const power = getPower(parsed.data.powerId);
+    if (!power) {
+      return Response.json({ error: "No such power." }, { status: 400 });
+    }
+    if (power.classId !== ctx.character.class) {
+      return Response.json({ error: `${ctx.character.name} cannot use ${power.name}.` }, { status: 403 });
+    }
+    const cooldowns = (ctx.character.powerCooldowns ?? {}) as Record<string, number>;
+    if ((cooldowns[power.id] ?? 0) > 0) {
+      return Response.json({ error: `${power.name} is not ready yet.` }, { status: 409 });
+    }
+
+    request = { action: `${ctx.character.name} calls on ${power.name} — ${power.blurb}` };
+    activatePowerId = power.id;
+  } else {
+    request = parsed.data.action ? { action: parsed.data.action, check: parsed.data.check } : null;
+  }
 
   let scene: string;
   try {
@@ -94,17 +117,21 @@ export async function POST(
             playerAction: request?.action ?? null,
             scene,
             roll,
+            activatePowerId,
           });
 
           const tail = {
             choices: committed.choices satisfies Choice[],
             diceRoll: committed.diceRoll,
+            leveledUp: committed.leveledUp,
+            sceneArtCaption: committed.sceneArtCaption,
             character: {
               hpCurrent: committed.character.hpCurrent,
               hpMax: committed.character.hpMax,
               xp: committed.character.xp,
               level: committed.character.level,
               inventory: committed.character.inventory,
+              powerCooldowns: committed.character.powerCooldowns,
             },
           };
 

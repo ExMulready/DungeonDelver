@@ -27,7 +27,12 @@ import { turnStateSchema, type TurnState } from "@/lib/llm/schemas";
 import { chronicleStore } from "@/lib/chronicle/store";
 import { renderChronicle, chronicleForPrompt } from "@/lib/chronicle/format";
 import { resolveCheck } from "@/lib/game/dice";
-import { EMPTY_WORLD_FACTS, type WorldFacts, type Choice, type DiceRoll, type InventoryItem } from "@/lib/game/types";
+import { getPower } from "@/lib/game/powers";
+import { getClass, abilityModifier } from "@/lib/game/srd";
+import {
+  EMPTY_WORLD_FACTS,
+  type WorldFacts, type Choice, type DiceRoll, type InventoryItem, type PowerCooldowns,
+} from "@/lib/game/types";
 
 /**
  * Turn orchestration.
@@ -341,12 +346,59 @@ function applyInventory(
   return out;
 }
 
+/* ── XP and leveling ──────────────────────────────────────────────────────── */
+
+const XP_PER_LEVEL = 1000;
+
+/**
+ * XP for a resolved turn, decided by the server rather than the extraction
+ * model — the small models this has to run on are not reliable judges of
+ * pacing, but "was there a check, and did it succeed" is information the
+ * engine already has for free from the roll it made before narrating.
+ */
+function awardXp(roll: DiceRoll | null): number {
+  if (!roll) return 40;
+  if (roll.critical === "hit") return 140;
+  if (roll.success) return 100;
+  return 60;
+}
+
+/**
+ * Applies XP and, on crossing XP_PER_LEVEL, a level. Loops rather than a
+ * single `if` so a large single award can never leave XP sitting above the
+ * threshold uncredited. XP is carried over by subtraction rather than reset
+ * to 0, so progress toward the next level is never discarded.
+ */
+function applyXp(
+  character: Character,
+  gained: number,
+): { xp: number; level: number; hpMax: number; leveledUp: boolean } {
+  let xp = character.xp + gained;
+  let level = character.level;
+  let hpMax = character.hpMax;
+  let leveledUp = false;
+
+  const cls = getClass(character.class);
+  const conMod = abilityModifier(character.stats.con);
+
+  while (xp >= XP_PER_LEVEL) {
+    xp -= XP_PER_LEVEL;
+    level += 1;
+    hpMax += Math.floor(cls.hitDie / 2) + conMod;
+    leveledUp = true;
+  }
+
+  return { xp, level, hpMax, leveledUp };
+}
+
 /* ── Committing a turn ────────────────────────────────────────────────────── */
 
 export type CommitResult = {
   choices: Choice[];
   character: Character;
   diceRoll: DiceRoll | null;
+  leveledUp: boolean;
+  sceneArtCaption: string | null;
 };
 
 /**
@@ -360,8 +412,10 @@ export async function commitTurn(args: {
   playerAction: string | null;
   scene: string;
   roll: DiceRoll | null;
+  /** Set when this turn was spent activating a class power — see powers.ts. */
+  activatePowerId?: string;
 }): Promise<CommitResult> {
-  const { ctx, playerAction, scene, roll } = args;
+  const { ctx, playerAction, scene, roll, activatePowerId } = args;
   const campaignId = ctx.campaign.id;
 
   let turnNumber = ctx.campaign.turnCount;
@@ -387,6 +441,7 @@ export async function commitTurn(args: {
         label: c.label,
         hint: c.hint,
         check: c.check,
+        icon: c.icon,
       }))
     : FALLBACK_CHOICES;
 
@@ -397,18 +452,52 @@ export async function commitTurn(args: {
     role: "narrator",
     content: scene,
     choices,
+    /* No image generation exists yet, so sceneArtUrl stays null — StoryPage
+       renders the empty carved frame with this caption beneath it. */
+    sceneArtCaption: state?.sceneArtCaption ?? null,
   });
 
   /* ── Character deltas ── */
   let character = ctx.character;
-  if (state) {
-    const hp = Math.max(0, Math.min(character.hpMax, character.hpCurrent + state.hpDelta));
-    const xp = character.xp + state.xpDelta;
-    const inventory = applyInventory(character.inventory ?? [], state);
+  let leveledUp = false;
+  {
+    /* Cooldowns tick down every resolved turn, not only power-activation
+       turns — this block runs unconditionally, unlike the hp/xp/inventory
+       patch below which needs a successful extraction pass. A power absent
+       from the map (or at 0) reads as ready in the UI, so entries that reach
+       0 are dropped rather than kept at zero. */
+    const currentCooldowns = (character.powerCooldowns ?? {}) as PowerCooldowns;
+    const nextCooldowns: PowerCooldowns = {};
+    for (const [id, turnsLeft] of Object.entries(currentCooldowns)) {
+      const remaining = turnsLeft - 1;
+      if (remaining > 0) nextCooldowns[id] = remaining;
+    }
+    if (activatePowerId) {
+      const power = getPower(activatePowerId);
+      if (power) nextCooldowns[activatePowerId] = power.cooldownTurns;
+    }
+
+    const patch: Partial<typeof characters.$inferInsert> = { powerCooldowns: nextCooldowns };
+
+    /* XP is awarded for every turn the player actually resolved — not the
+       unprompted opening scene, which nobody took an action to earn. */
+    if (playerAction) {
+      const { xp, level, hpMax, leveledUp: didLevel } = applyXp(character, awardXp(roll));
+      patch.xp = xp;
+      patch.level = level;
+      patch.hpMax = hpMax;
+      leveledUp = didLevel;
+    }
+
+    if (state) {
+      const hpMax = patch.hpMax ?? character.hpMax;
+      patch.hpCurrent = Math.max(0, Math.min(hpMax, character.hpCurrent + state.hpDelta));
+      patch.inventory = applyInventory(character.inventory ?? [], state);
+    }
 
     const updated = await db
       .update(characters)
-      .set({ hpCurrent: hp, xp, inventory })
+      .set(patch)
       .where(eq(characters.id, character.id))
       .returning();
 
@@ -463,7 +552,7 @@ export async function commitTurn(args: {
 
   await chronicleStore().write(campaignId, markdown);
 
-  return { choices, character, diceRoll: roll };
+  return { choices, character, diceRoll: roll, leveledUp, sceneArtCaption: state?.sceneArtCaption ?? null };
 }
 
 /**

@@ -15,7 +15,12 @@ import {
   getRace,
   getClass,
 } from "./srd";
-import { EMPTY_WORLD_FACTS } from "./types";
+import { rollMany } from "./dice";
+import { loadCampaignContext } from "./engine";
+import {
+  EMPTY_WORLD_FACTS, EMPTY_EQUIPMENT, slotsForKind,
+  type InventoryItem, type Equipment, type EquipmentSlot,
+} from "./types";
 
 export type ActionState = { error?: string };
 
@@ -118,4 +123,150 @@ export async function abandonCampaignAction(campaignId: string) {
 
   revalidatePath("/campaigns");
   redirect("/campaigns");
+}
+
+export type UseItemResult = {
+  error?: string;
+  hpCurrent?: number;
+  hpMax?: number;
+  inventory?: InventoryItem[];
+};
+
+/** 2d4+2 — the fixed healing roll for any "potion:heal" item. */
+function rollHealing(): number {
+  return rollMany(2, 4).reduce((a, b) => a + b, 0) + 2;
+}
+
+/**
+ * Consumes one inventory item and applies its effect.
+ *
+ * Only "potion:heal" does anything mechanical right now — everything else is
+ * flavour, consumed with a chronicle note but no numeric effect. The note is
+ * folded into `actSummary` (the chronicle's "Prior Acts" prose) rather than
+ * appended to the stored markdown directly: the markdown is regenerated whole
+ * from structured state on every turn (see renderChronicle in
+ * src/lib/chronicle/format.ts), so a raw append there would be silently
+ * discarded the next time a turn commits. actSummary is durable DB state the
+ * next chronicle rebuild reads back in, which is what lets the narrator know a
+ * potion was drunk even though this happens outside the normal turn flow.
+ */
+export async function useItem(campaignId: string, itemId: string): Promise<UseItemResult> {
+  const userId = await requireUserId();
+
+  const ctx = await loadCampaignContext(campaignId, userId);
+  if (!ctx) return { error: "No such campaign." };
+
+  const character = ctx.character;
+  const item = (character.inventory ?? []).find((i) => i.id === itemId);
+  if (!item) return { error: "That item is not in your pack." };
+
+  let hpCurrent = character.hpCurrent;
+  let note = `${character.name} uses ${item.name}.`;
+
+  if (item.kind === "potion:heal") {
+    const healed = rollHealing();
+    hpCurrent = Math.min(character.hpMax, character.hpCurrent + healed);
+    note = `${character.name} drinks ${item.name}, recovering ${healed} hit points (now ${hpCurrent}/${character.hpMax}).`;
+  }
+
+  const inventory = (character.inventory ?? [])
+    .map((i) => (i.id === itemId ? { ...i, quantity: i.quantity - 1 } : i))
+    .filter((i) => i.quantity > 0);
+
+  await db
+    .update(characters)
+    .set({ hpCurrent, inventory })
+    .where(eq(characters.id, character.id));
+
+  const existingSummary = ctx.memory.actSummary ?? "";
+  await db
+    .update(campaignMemory)
+    .set({ actSummary: `${existingSummary}\n\n${note}`.trim(), updatedAt: new Date() })
+    .where(eq(campaignMemory.campaignId, campaignId));
+
+  revalidatePath(`/campaigns/${campaignId}`);
+
+  return { hpCurrent, hpMax: character.hpMax, inventory };
+}
+
+export type EquipResult = {
+  error?: string;
+  ac?: number;
+  equipment?: Equipment;
+  inventory?: InventoryItem[];
+};
+
+/** Adds an item back into the backpack, stacking onto a matching entry. */
+function returnToInventory(inventory: InventoryItem[], item: InventoryItem): InventoryItem[] {
+  const existing = inventory.find(
+    (i) => i.name.toLowerCase() === item.name.toLowerCase() && i.rarity === item.rarity,
+  );
+  if (existing) {
+    return inventory.map((i) => (i === existing ? { ...i, quantity: i.quantity + 1 } : i));
+  }
+  return [...inventory, { ...item, quantity: 1 }];
+}
+
+/**
+ * Equips an inventory item to the first open (or, failing that, first) slot
+ * its kind allows. Slot compatibility is server-validated from item.kind —
+ * see EQUIPPABLE_KIND_SLOTS in src/lib/game/types.ts — never trusted from the
+ * client, which only ever gets to name an item, not a slot.
+ */
+export async function equipItem(campaignId: string, itemId: string): Promise<EquipResult> {
+  const userId = await requireUserId();
+  const ctx = await loadCampaignContext(campaignId, userId);
+  if (!ctx) return { error: "No such campaign." };
+
+  const character = ctx.character;
+  const item = (character.inventory ?? []).find((i) => i.id === itemId);
+  if (!item) return { error: "That item is not in your pack." };
+
+  const candidateSlots = slotsForKind(item.kind);
+  if (candidateSlots.length === 0) return { error: `${item.name} cannot be equipped.` };
+
+  const equipment = { ...EMPTY_EQUIPMENT, ...(character.equipment ?? {}) } as Equipment;
+  const slot = candidateSlots.find((s) => !equipment[s]) ?? candidateSlots[0];
+  const displaced = equipment[slot];
+
+  equipment[slot] = { ...item, quantity: 1 };
+
+  let inventory = (character.inventory ?? [])
+    .map((i) => (i.id === itemId ? { ...i, quantity: i.quantity - 1 } : i))
+    .filter((i) => i.quantity > 0);
+  if (displaced) inventory = returnToInventory(inventory, displaced);
+
+  const ac = deriveAc(character.stats.dex, equipment);
+
+  await db
+    .update(characters)
+    .set({ equipment, inventory, ac })
+    .where(eq(characters.id, character.id));
+
+  revalidatePath(`/campaigns/${campaignId}`);
+  return { ac, equipment, inventory };
+}
+
+/** Unequips whatever is in a slot back into the backpack. */
+export async function unequipItem(campaignId: string, slot: EquipmentSlot): Promise<EquipResult> {
+  const userId = await requireUserId();
+  const ctx = await loadCampaignContext(campaignId, userId);
+  if (!ctx) return { error: "No such campaign." };
+
+  const character = ctx.character;
+  const equipment = { ...EMPTY_EQUIPMENT, ...(character.equipment ?? {}) } as Equipment;
+  const item = equipment[slot];
+  if (!item) return { error: "Nothing is equipped there." };
+
+  equipment[slot] = null;
+  const inventory = returnToInventory(character.inventory ?? [], item);
+  const ac = deriveAc(character.stats.dex, equipment);
+
+  await db
+    .update(characters)
+    .set({ equipment, inventory, ac })
+    .where(eq(characters.id, character.id));
+
+  revalidatePath(`/campaigns/${campaignId}`);
+  return { ac, equipment, inventory };
 }
