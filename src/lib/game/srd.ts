@@ -1,4 +1,4 @@
-import type { Ability, AbilityScores } from "./types";
+import type { Ability, AbilityScores, Equipment } from "./types";
 
 /**
  * Character options, derived from the SRD 5.1 (CC-BY-4.0).
@@ -205,9 +205,19 @@ export function deriveMaxHp(classId: ClassId, con: number): number {
   return Math.max(1, getClass(classId).hitDie + abilityModifier(con));
 }
 
-/** Unarmoured baseline. Equipment adjusts this later; the narrator does not. */
-export function deriveAc(dex: number): number {
-  return 10 + abilityModifier(dex);
+/**
+ * Unarmoured baseline, or armoured if equipment is supplied. The narrator
+ * never decides AC — only equipItem/unequipItem in src/lib/game/actions.ts
+ * touch it, and always by recomputing from here rather than nudging a number.
+ * Flat bonuses rather than a real armour-class table: items don't carry a
+ * weight category, only a kind, so "chest armour equipped" is all the
+ * information there is to work with.
+ */
+export function deriveAc(dex: number, equipment?: Equipment): number {
+  let ac = 10 + abilityModifier(dex);
+  if (equipment?.chest) ac += 2;
+  if (equipment?.offhand?.kind === "shield") ac += 2;
+  return ac;
 }
 
 /** Spell points, used purely to drive the mana orb. Non-casters show none. */

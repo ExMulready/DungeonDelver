@@ -23,6 +23,9 @@ export type InventoryItem = {
   kind?: string;
 };
 
+/** Drives the glyph/tint on a choice's plaque tile. See src/lib/game/icons.ts. */
+export type ChoiceIcon = "arcane" | "parley" | "camp" | "travel" | "violence";
+
 /** An option offered to the player at the end of a narrator turn. */
 export type Choice = {
   id: string;
@@ -32,6 +35,8 @@ export type Choice = {
   hint?: string;
   /** Set when the narrator wants this option gated behind a check. */
   check?: SuggestedCheck;
+  /** Not yet produced by the narrator — the UI defaults to "travel" when absent. */
+  icon?: ChoiceIcon;
 };
 
 /** The narrator proposes; the server rolls. */
@@ -85,3 +90,56 @@ export const EMPTY_WORLD_FACTS: WorldFacts = {
   locations: [],
   quests: [],
 };
+
+/** Paperdoll slot keys. Order matches the grid placement in EquipmentGrid.tsx. */
+export const EQUIPMENT_SLOTS = [
+  "weapon", "offhand", "head", "shoulders", "hands", "chest",
+  "cloak", "amulet", "boots", "ring1", "ring2", "belt",
+] as const;
+
+export type EquipmentSlot = (typeof EQUIPMENT_SLOTS)[number];
+
+export type Equipment = Record<EquipmentSlot, InventoryItem | null>;
+
+export const EMPTY_EQUIPMENT: Equipment = {
+  weapon: null, offhand: null, head: null, shoulders: null, hands: null, chest: null,
+  cloak: null, amulet: null, boots: null, ring1: null, ring2: null, belt: null,
+};
+
+/**
+ * Which paperdoll slot(s) an item's free-form `kind` can go in. `kind` is
+ * otherwise unconstrained (the narrator tags items loosely — 'weapon', 'key',
+ * 'relic', 'reagent') so only kinds listed here are equippable at all; a
+ * multi-slot entry (ring) equips to the first open slot of the two.
+ */
+export const EQUIPPABLE_KIND_SLOTS: Record<string, EquipmentSlot[]> = {
+  weapon: ["weapon"],
+  offhand: ["offhand"],
+  shield: ["offhand"],
+  armor: ["chest"],
+  armour: ["chest"],
+  chest: ["chest"],
+  head: ["head"],
+  helm: ["head"],
+  helmet: ["head"],
+  shoulders: ["shoulders"],
+  hands: ["hands"],
+  gloves: ["hands"],
+  gauntlets: ["hands"],
+  boots: ["boots"],
+  feet: ["boots"],
+  cloak: ["cloak"],
+  cape: ["cloak"],
+  amulet: ["amulet"],
+  necklace: ["amulet"],
+  ring: ["ring1", "ring2"],
+  belt: ["belt"],
+};
+
+export function slotsForKind(kind: string | undefined): EquipmentSlot[] {
+  if (!kind) return [];
+  return EQUIPPABLE_KIND_SLOTS[kind.toLowerCase()] ?? [];
+}
+
+/** Turns remaining before each power is usable again. Absent key = ready. */
+export type PowerCooldowns = Record<string, number>;

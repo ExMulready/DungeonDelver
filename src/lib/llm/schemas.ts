@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { choiceIconSchema } from "@/lib/game/schemas";
 
 /**
  * The narrator's structured output contract.
@@ -23,6 +24,9 @@ export const choiceSchema = z.object({
   label: z.string().min(1).max(120),
   hint: z.string().max(160).optional(),
   check: suggestedCheckSchema.optional(),
+  /* Left optional rather than defaulted here — src/lib/game/icons.ts is the
+     single place that decides what an absent icon renders as. */
+  icon: choiceIconSchema.optional(),
 });
 
 export const itemSchema = z.object({
@@ -88,6 +92,11 @@ export const turnStateSchema = z.object({
 
   /* Short title, only used to name a campaign on its opening turn. */
   suggestedTitle: z.string().max(70).optional(),
+
+  /* A caption for the scene's (currently unfilled) art frame. No image
+     generation exists yet — see StoryPage.tsx — so this is the only part of
+     the art slot that renders today. */
+  sceneArtCaption: z.string().max(120).optional(),
 });
 
 export type TurnState = z.infer<typeof turnStateSchema>;
